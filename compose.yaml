@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  ai_gateway_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_model_gateway
+    ports:
+      - "6161:6161"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6161/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - ai_gateway_network
+
+networks:
+  ai_gateway_network:
+    driver: bridge
