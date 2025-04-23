@@ -1,6 +1,7 @@
 # app/services/model_router.py
 from typing import Dict, Any, Tuple, List, Optional, AsyncGenerator # Add AsyncGenerator
 import json
+import re # Import re for regex operations
 from app.services.gemini import GeminiService
 from app.services.grok import GrokService # Import GrokService
 from app.models.schemas import ChatMessage
@@ -11,7 +12,12 @@ import logging # Add logging
 
 class ModelRouter:
     """Lớp chịu trách nhiệm định tuyến các yêu cầu đến mô hình AI thích hợp."""
-    
+
+    @staticmethod
+    def _strip_provider_prefix(model_id: str) -> str:
+        """Removes provider prefix (e.g., 'google/', 'x-ai/') from model ID."""
+        return re.sub(r"^(google|x-ai)/", "", model_id)
+
     @staticmethod
     def _determine_provider(model: str) -> str:
         """Determines the provider ('google' or 'x-ai') based on model name."""
@@ -55,7 +61,7 @@ class ModelRouter:
         provider_api_keys = provider_api_keys or {}
         
         original_model_name = model
-        base_model_name = model # Use the full model name
+        base_model_name = ModelRouter._strip_provider_prefix(model) # Strip provider prefix
         provider = ModelRouter._determine_provider(model)
 
         # --- Route based on provider derived from prefix ---
@@ -225,7 +231,7 @@ class ModelRouter:
         logging.info(f"Routing simple chat request for model: {model}")
 
         original_model_name = model
-        base_model_name = model # Use the full model name
+        base_model_name = ModelRouter._strip_provider_prefix(model) # Strip provider prefix
         provider = ModelRouter._determine_provider(model)
 
         if provider == "google":
@@ -296,7 +302,7 @@ class ModelRouter:
         created_time = int(time.time())
 
         original_model_name = model
-        base_model_name = model # Use the full model name
+        base_model_name = ModelRouter._strip_provider_prefix(model) # Strip provider prefix
         try:
             provider = ModelRouter._determine_provider(model)
         except HTTPException as e:

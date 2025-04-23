@@ -95,8 +95,6 @@ async def create_chat_completion(
             detail=f"Lỗi không mong đợi: {e}"
         )
 
-# Endpoint cũ cho tương thích ngược (REMOVED)
-
 # Endpoint chuẩn OpenAI cho models
 @router.get(
     "/models",
@@ -106,11 +104,11 @@ async def create_chat_completion(
 async def list_models(
     user_info: Dict[str, Any] = Depends(verify_api_key)
 ):
-    """Liệt kê các mô hình được hỗ trợ (Gemini và Grok)."""
+    """Liệt kê các mô hình được hỗ trợ (Gemini và Grok) với tiền tố provider."""
     # Lấy settings để truy cập model names nếu cần (hoặc hardcode như hiện tại)
     # settings = get_settings() # Uncomment if using settings for model IDs
 
-    models = [
+    raw_models = [
         # Gemini Models (Updated list)
         ModelInfo(id="gemini-2.5-flash-preview-04-17", created=1713000000, owned_by="google"),
         ModelInfo(id="gemini-2.5-pro-preview-03-25", created=1711000000, owned_by="google"),
@@ -134,4 +132,17 @@ async def list_models(
         ModelInfo(id="grok-vision-beta", created=1710000007, owned_by="xai"),
     ]
 
-    return ModelList(data=models)
+    # Add provider prefix to the model ID for display purposes
+    display_models = []
+    for model in raw_models:
+        prefix = "google/" if model.owned_by == "google" else "x-ai/" if model.owned_by == "xai" else ""
+        display_models.append(
+            ModelInfo(
+                id=f"{prefix}{model.id}",
+                created=model.created,
+                owned_by=model.owned_by
+            )
+        )
+
+
+    return ModelList(data=display_models)
