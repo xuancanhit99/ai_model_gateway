@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # --- AI Model Settings ---
     GOOGLE_AI_STUDIO_API_KEY: str = ""
-    GEMINI_VISION_MODEL_NAME: str = "gemini-2.0-flash-exp-image-generation"
+    GEMINI_VISION_MODEL_NAME: str = "gemini-2.0-flash"
     GEMINI_CHAT_MODEL_NAME: str = "gemini-2.5-pro-exp-03-25"
 
     # --- File Handling ---
