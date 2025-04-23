@@ -11,9 +11,9 @@ app = FastAPI(
     version=settings.APP_VERSION,
 )
 
-app.include_router(vision.router, prefix=f"{settings.API_V1_STR}/vision", tags=["Vision"]) # Changed ocr to vision
 app.include_router(health.router, prefix=settings.API_V1_STR, tags=["Health"]) # Add tag for consistency
-app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["Chat"]) # Include the chat router
+app.include_router(vision.router, prefix=f"{settings.API_V1_STR}/vision", tags=["Vision"]) # Changed ocr to vision
+app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["Chat"]) # Reset prefix for chat router
 @app.get("/")
 async def root():
     return {"message": f"Welcome to {settings.APP_NAME}!"}

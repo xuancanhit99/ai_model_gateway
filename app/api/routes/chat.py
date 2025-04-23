@@ -25,7 +25,7 @@ def get_chat_service(
         )
 
 @router.post(
-    "/", # Endpoint will be /chat/
+    "/generate-text", # Changed endpoint path
     response_model=ChatResponse,
     summary="Generate Text Response using Gemini",
     responses={
