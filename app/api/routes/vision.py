@@ -23,14 +23,15 @@ settings = get_settings()
 async def extract_text_from_image(
         file: UploadFile = File(..., description="Image file to process"),
         prompt: Optional[str] = Form(None, description="Optional: Custom prompt for extraction"),
-        model_name: Optional[str] = Form(None, description="Optional: Specify Gemini model name"),
+        model: Optional[str] = Form(None, description="Optional: Specify Gemini model ID"), # Changed model_name to model
         x_api_key: Optional[str] = Header(None, alias="X-API-Key")
 ):
-    # Khởi tạo service với model_name từ form
+    # Khởi tạo service với model từ form
     try:
+        # Pass the model parameter to GeminiService (will be renamed in service)
         service = GeminiService(
             api_key=x_api_key,
-            model_name=model_name or settings.GEMINI_VISION_MODEL_NAME
+            model=model or settings.GEMINI_VISION_MODEL_NAME
         )
     except ValueError as e:
         raise HTTPException(
@@ -38,11 +39,11 @@ async def extract_text_from_image(
             detail=f"Gemini Service initialization failed: {e}"
         )
 
-    # Kiểm tra loại file có được phép không
-    if file.content_type not in settings.ALLOWED_CONTENT_TYPES:
+    # Kiểm tra loại file có được phép không (sử dụng danh sách cho Gemini)
+    if file.content_type not in settings.GEMINI_ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Định dạng file không được hỗ trợ. Các định dạng cho phép: {', '.join(settings.ALLOWED_CONTENT_TYPES)}"
+            detail=f"Định dạng file không được hỗ trợ cho Gemini. Các định dạng cho phép: {', '.join(settings.GEMINI_ALLOWED_CONTENT_TYPES)}"
         )
 
     try:
@@ -60,7 +61,7 @@ async def extract_text_from_image(
             filename=file.filename,
             content_type=file.content_type,
             extracted_text=extracted_text,
-            model_used=service.model_name
+            model_used=service.model_id # Use the renamed internal variable (will be changed in service)
         )
     finally:
         await file.close()

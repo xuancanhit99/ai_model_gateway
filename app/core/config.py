@@ -15,13 +15,25 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # --- AI Model Settings ---
-    GOOGLE_AI_STUDIO_API_KEY: str = ""
+    GOOGLE_AI_STUDIO_API_KEY: Optional[str] = None
     GEMINI_VISION_MODEL_NAME: str = "gemini-2.0-flash"
     GEMINI_CHAT_MODEL_NAME: str = "gemini-2.5-pro-exp-03-25"
 
+    # --- Grok Settings ---
+    XAI_API_KEY: Optional[str] = None # Allow None if key might be passed via header
+    XAI_API_BASE_URL: str = "https://api.x.ai/v1" # Default Grok API base
+    GROK_CHAT_MODEL_NAME: str = "grok-2-1212" # Example text model
+    GROK_VISION_MODEL_NAME: str = "grok-2-vision-1212" # Example vision model
+
     # --- File Handling ---
-    ALLOWED_CONTENT_TYPES: List[str] = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]
-    
+    # Allowed content types for each service
+    GEMINI_ALLOWED_CONTENT_TYPES: List[str] = Field(default_factory=lambda: [
+        "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"
+    ])
+    GROK_ALLOWED_CONTENT_TYPES: List[str] = Field(default_factory=lambda: [
+        "image/jpeg", "image/png" # As specified for Grok
+    ])
+
     # --- Pydantic Settings Config ---
     model_config = {
         "env_file": ".env",

@@ -32,9 +32,10 @@ async def create_chat_completion(
     request: Request,
     user_info: Dict[str, Any] = Depends(verify_api_key),
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
+    x_grok_api_key: Optional[str] = Header(None, alias="X-Grok-API-Key"), # Add Grok key header
 ):
     """
-    Tạo chat completion tương thích với OpenAI.
+    Tạo chat completion tương thích với OpenAI, hỗ trợ Gemini và Grok.
     Đọc request body trực tiếp để đảm bảo linh hoạt tối đa.
     """
     try:
@@ -50,7 +51,9 @@ async def create_chat_completion(
         provider_api_keys = {}
         if x_google_api_key:
             provider_api_keys["google"] = x_google_api_key
-            
+        if x_grok_api_key: # Add Grok key if provided
+            provider_api_keys["grok"] = x_grok_api_key
+
         # Định tuyến tới mô hình phù hợp
         if stream:
             # Gọi phương thức streaming mới (sẽ tạo ở bước sau)
@@ -103,24 +106,32 @@ async def create_chat_completion(
 async def list_models(
     user_info: Dict[str, Any] = Depends(verify_api_key)
 ):
-    """Liệt kê các mô hình được hỗ trợ."""
-    # Danh sách mô hình được hỗ trợ - chỉ bao gồm Gemini
+    """Liệt kê các mô hình được hỗ trợ (Gemini và Grok)."""
+    # Lấy settings để truy cập model names nếu cần (hoặc hardcode như hiện tại)
+    # settings = get_settings() # Uncomment if using settings for model IDs
+
     models = [
-        ModelInfo(
-            id="gemini-2.5-pro-exp-03-25",
-            created=1677610602,
-            owned_by="google"
-        ),
-        ModelInfo(
-            id="gemini-2.0-flash",
-            created=1677649963,
-            owned_by="google"
-        ),
-        ModelInfo(
-            id="gemini-1.5-pro-latest",
-            created=1677610602,
-            owned_by="google"
-        )
+        # Gemini Models (Updated list)
+        ModelInfo(id="gemini-2.5-flash-preview-04-17", created=1713000000, owned_by="google"),
+        ModelInfo(id="gemini-2.5-pro-preview-03-25", created=1711000000, owned_by="google"),
+        ModelInfo(id="gemini-2.0-flash", created=1709000000, owned_by="google"),
+        ModelInfo(id="gemini-2.0-flash-lite", created=1709000001, owned_by="google"),
+        ModelInfo(id="gemini-1.5-flash", created=1708000000, owned_by="google"),
+        ModelInfo(id="gemini-1.5-flash-8b", created=1708000001, owned_by="google"),
+        ModelInfo(id="gemini-1.5-pro", created=1707000000, owned_by="google"),
+        ModelInfo(id="gemini-embedding-exp", created=1706000000, owned_by="google"),
+        ModelInfo(id="imagen-3.0-generate-002", created=1714000000, owned_by="google"),
+        ModelInfo(id="veo-2.0-generate-001", created=1715000000, owned_by="google"),
+        ModelInfo(id="gemini-2.0-flash-live-001", created=1716000000, owned_by="google"),
+        # Grok Models (Updated list without prefix)
+        ModelInfo(id="grok-2-1212", created=1710000000, owned_by="xai"),
+        ModelInfo(id="grok-2-vision-1212", created=1710000001, owned_by="xai"),
+        ModelInfo(id="grok-3-beta", created=1710000002, owned_by="xai"),
+        ModelInfo(id="grok-3-fast-beta", created=1710000003, owned_by="xai"),
+        ModelInfo(id="grok-3-mini-beta", created=1710000004, owned_by="xai"),
+        ModelInfo(id="grok-3-mini-fast-beta", created=1710000005, owned_by="xai"),
+        ModelInfo(id="grok-beta", created=1710000006, owned_by="xai"),
+        ModelInfo(id="grok-vision-beta", created=1710000007, owned_by="xai"),
     ]
-    
+
     return ModelList(data=models)

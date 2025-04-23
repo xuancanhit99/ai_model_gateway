@@ -24,7 +24,7 @@ class ChatRequest(BaseModel):
     """Request model for the chat endpoint."""
     message: str # The new message from the user
     history: list[ChatMessage] = [] # Optional chat history
-    model_name: str | None = None # Optional model override
+    model: str | None = None # Changed from model_name to model
 
 class ChatResponse(BaseModel):
     """Response model for the chat endpoint."""
