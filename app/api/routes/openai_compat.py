@@ -1,21 +1,25 @@
 # app/api/routes/openai_compat.py
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Header, status, Request
+from fastapi.responses import StreamingResponse # Import StreamingResponse
 from typing import Dict, Any, Optional, List
 from app.core.auth import verify_api_key
 from app.models.schemas import (
     ChatCompletionRequest, 
-    ChatCompletionResponse, 
     ErrorResponse,
     ModelList,
     ModelInfo
 )
 from app.services.model_router import ModelRouter
+import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 router = APIRouter()
 
+# Endpoint chuẩn OpenAI cho chat completions
 @router.post(
-    "/completions",
-    response_model=ChatCompletionResponse,
+    "/chat/completions",
     summary="OpenAI-compatible chat completions API",
     responses={
         status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},
@@ -25,33 +29,57 @@ router = APIRouter()
     }
 )
 async def create_chat_completion(
-    request: ChatCompletionRequest,
+    request: Request,
     user_info: Dict[str, Any] = Depends(verify_api_key),
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
-    x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
 ):
     """
     Tạo chat completion tương thích với OpenAI.
-    Hỗ trợ các mô hình từ nhiều nhà cung cấp.
+    Đọc request body trực tiếp để đảm bảo linh hoạt tối đa.
     """
     try:
-        # Thu thập API key của từng nhà cung cấp
+        # Đọc request body
+        body = await request.json()
+        model = body.get("model", "gemini-2.5-pro-exp-03-25")
+        messages = body.get("messages", [])
+        temperature = body.get("temperature", 0.7)
+        max_tokens = body.get("max_tokens", None)
+        stream = body.get("stream", False) # Check for stream parameter
+
+        # Thu thập API key
         provider_api_keys = {}
         if x_google_api_key:
             provider_api_keys["google"] = x_google_api_key
-        if x_xai_api_key:
-            provider_api_keys["x-ai"] = x_xai_api_key
             
         # Định tuyến tới mô hình phù hợp
-        response = await ModelRouter.route_chat_completion(
-            model=request.model,
-            messages=request.messages,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            provider_api_keys=provider_api_keys
-        )
-        
-        return response
+        if stream:
+            # Gọi phương thức streaming mới (sẽ tạo ở bước sau)
+            async def stream_generator():
+                # Placeholder: Sẽ gọi ModelRouter.stream_chat_completion ở đây
+                # và yield các chunk đã được định dạng SSE
+                async for chunk in ModelRouter.stream_chat_completion(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    provider_api_keys=provider_api_keys
+                ):
+                    yield chunk # ModelRouter.stream_chat_completion sẽ định dạng SSE
+
+            # Trả về StreamingResponse
+            return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        else:
+            # Giữ nguyên logic không streaming
+            response = await ModelRouter.route_chat_completion(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_api_keys=provider_api_keys
+            )
+            # Ghi log phản hồi JSON trước khi trả về (chỉ cho non-streaming)
+            logging.info(f"API Response: {json.dumps(response, indent=2, ensure_ascii=False)}")
+            return response
         
     except ValueError as e:
         raise HTTPException(
@@ -64,6 +92,9 @@ async def create_chat_completion(
             detail=f"Lỗi không mong đợi: {e}"
         )
 
+# Endpoint cũ cho tương thích ngược (REMOVED)
+
+# Endpoint chuẩn OpenAI cho models
 @router.get(
     "/models",
     response_model=ModelList,
@@ -73,19 +104,23 @@ async def list_models(
     user_info: Dict[str, Any] = Depends(verify_api_key)
 ):
     """Liệt kê các mô hình được hỗ trợ."""
-    # Danh sách mô hình được hỗ trợ
+    # Danh sách mô hình được hỗ trợ - chỉ bao gồm Gemini
     models = [
         ModelInfo(
-            id="google/gemini-2.5-pro-exp-03-25",
+            id="gemini-2.5-pro-exp-03-25",
             created=1677610602,
             owned_by="google"
         ),
         ModelInfo(
-            id="google/gemini-2.0-flash",
+            id="gemini-2.0-flash",
             created=1677649963,
             owned_by="google"
+        ),
+        ModelInfo(
+            id="gemini-1.5-pro-latest",
+            created=1677610602,
+            owned_by="google"
         )
-        # Sau này sẽ thêm các mô hình khác
     ]
     
     return ModelList(data=models)

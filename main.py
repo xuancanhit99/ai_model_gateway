@@ -20,9 +20,8 @@ app.include_router(vision.router, prefix=f"{settings.API_V1_STR}/vision", tags=[
 # Original Chat routes (keep them for backward compatibility)
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["Chat"])
 
-# OpenAI compatible routes - CHANGED PREFIX to be directly at /v1 instead of /api/v1/chat
-# This makes it compatible with tools expecting standard OpenAI API structure
-app.include_router(openai_compat.router, prefix="/v1", tags=["OpenAI Compatible"])
+# OpenAI compatible routes - Chỉ sử dụng prefix /v1
+app.include_router(openai_compat.router, prefix="/v1", tags=["OpenAI Standard"])
 
 @app.get("/")
 async def root():
