@@ -10,6 +10,7 @@ from app.models.schemas import (
     ModelInfo
 )
 from app.services.model_router import ModelRouter
+from app.core.config import get_settings
 import json
 import logging
 
@@ -33,7 +34,7 @@ async def create_chat_completion(
     user_info: Dict[str, Any] = Depends(verify_api_key),
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
     x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
-    x_gigachat_api_key: Optional[str] = Header(None, alias="X-GigaChat-API-Key"), # Add GigaChat key header
+    x_gigachat_api_key: Optional[str] = Header(None, alias="X-GigaChat-API-Key"),
 ):
     """
     Tạo chat completion tương thích với OpenAI, hỗ trợ Gemini, Grok và GigaChat.
@@ -50,15 +51,15 @@ async def create_chat_completion(
 
         # Thu thập API key
         provider_api_keys = {}
-        google_key = x_google_api_key # No fallback needed here as verify_api_key handles general auth
+        google_key = x_google_api_key
         grok_key = x_xai_api_key
-        gigachat_key = x_gigachat_api_key # Get GigaChat key from header
+        gigachat_key = x_gigachat_api_key
 
         if google_key:
             provider_api_keys["google"] = google_key
         if grok_key:
             provider_api_keys["grok"] = grok_key
-        if gigachat_key: # Add GigaChat key if provided
+        if gigachat_key:
             provider_api_keys["gigachat"] = gigachat_key
 
         # Định tuyến tới mô hình phù hợp
