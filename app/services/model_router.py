@@ -7,6 +7,7 @@ import mimetypes
 from app.services.gemini import GeminiService
 from app.services.grok import GrokService
 from app.services.gigachat_service import GigaChatService
+from app.services.sonar import SonarService
 from app.models.schemas import ChatMessage
 import time
 import uuid
@@ -20,12 +21,12 @@ class ModelRouter:
 
     @staticmethod
     def _strip_provider_prefix(model_id: str) -> str:
-        """Removes provider prefix (e.g., 'google/', 'x-ai/', 'sber/') from model ID."""
-        return re.sub(r"^(google|x-ai|sber)/", "", model_id)
+        """Removes provider prefix (e.g., 'google/', 'x-ai/', 'sber/', 'perplexity/') from model ID."""
+        return re.sub(r"^(google|x-ai|sber|perplexity)/", "", model_id)
 
     @staticmethod
     def _determine_provider(model: str) -> str:
-        """Determines the provider ('google', 'x-ai', or 'gigachat') based on model name/prefix."""
+        """Determines the provider ('google', 'x-ai', 'gigachat', or 'perplexity') based on model name/prefix."""
         if not model:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Model name must be specified.")
 
@@ -35,11 +36,13 @@ class ModelRouter:
             return "x-ai"
         elif model.startswith("sber/") or "gigachat" in model.lower():
             return "gigachat"
+        elif model.startswith("perplexity/") or "sonar" in model.lower() or "r1-1776" in model.lower():
+            return "perplexity"
         else:
             logging.error(f"Could not determine provider for model: {model}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Could not determine the provider for the requested model '{model}'. Supported models contain 'gemini', 'grok', or 'gigachat'."
+                detail=f"Could not determine the provider for the requested model '{model}'. Supported models contain 'gemini', 'grok', 'gigachat', or 'sonar'."
             )
 
     @staticmethod
@@ -140,7 +143,7 @@ class ModelRouter:
         provider_api_keys: Dict[str, str] = None
     ) -> Dict[str, Any]:
         """
-        Định tuyến yêu cầu chat completion tới mô hình Google Gemini.
+        Định tuyến yêu cầu chat completion tới mô hình AI thích hợp.
         
         Args:
             model: Tên mô hình (ví dụ: "gemini-2.5-pro-exp-03-25")
@@ -241,6 +244,27 @@ class ModelRouter:
             except Exception as e:
                 logging.exception(f"Error processing GigaChat request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing request with GigaChat: {e}")
+
+        elif provider == "perplexity":
+            api_key = provider_api_keys.get("perplexity")
+            try:
+                service = SonarService(api_key=api_key, model=base_model_name)
+                response_payload = await service.create_chat_completion(
+                    messages=messages,
+                    model=base_model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False
+                )
+                response_payload["model"] = original_model_name
+                return response_payload
+            except ValueError as e:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Perplexity API Key Error: {e}")
+            except HTTPException as e:
+                raise e
+            except Exception as e:
+                logging.exception(f"Error processing Perplexity Sonar request for model {original_model_name}: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing request with Perplexity Sonar: {e}")
 
         logging.error(f"Internal routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
@@ -395,6 +419,26 @@ class ModelRouter:
                 logging.exception(f"Error processing simple GigaChat chat request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with GigaChat: {e}")
 
+        elif provider == "perplexity":
+            api_key = provider_api_keys.get("perplexity")
+            try:
+                service = SonarService(api_key=api_key, model=base_model_name)
+                response_text, model_used = await service.generate_text_response(
+                    message=message,
+                    history=history,
+                    model=base_model_name
+                )
+                if response_text is None: response_text = ""
+                elif not isinstance(response_text, str): response_text = str(response_text)
+                return response_text, original_model_name
+            except ValueError as e:
+                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Perplexity API Key Error: {e}")
+            except HTTPException as e:
+                raise e
+            except Exception as e:
+                logging.exception(f"Error processing simple Perplexity chat request for model {original_model_name}: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with Perplexity Sonar: {e}")
+
         logging.error(f"Internal routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
 
@@ -407,7 +451,7 @@ class ModelRouter:
         provider_api_keys: Dict[str, str] = None
     ) -> AsyncGenerator[str, None]:
         """
-        Định tuyến và stream yêu cầu chat completion tới mô hình Google Gemini.
+        Định tuyến và stream yêu cầu chat completion tới mô hình AI thích hợp.
         Yields Server-Sent Events (SSE) formatted strings.
         """
         provider_api_keys = provider_api_keys or {}
@@ -491,11 +535,8 @@ class ModelRouter:
 
         elif provider == "gigachat":
             auth_key = provider_api_keys.get("gigachat")
-            # Removed key existence check since GigaChatService handles fallback
             try:
-                # Initialize service and let it handle fallback
                 service = GigaChatService(auth_key=auth_key)
-                # Use stream method without passing auth_key (already passed during initialization)
                 async for chunk in service.stream_chat_completion(
                     model=base_model_name,
                     messages=messages,
@@ -515,6 +556,30 @@ class ModelRouter:
             except Exception as e:
                 logging.exception(f"Error streaming from GigaChat for model {original_model_name}: {e}")
                 error_payload = {"error": {"message": f"Error streaming from GigaChat: {e}", "type": "internal_server_error", "code": 500}}
+                yield f"data: {json.dumps(error_payload)}\n\n"
+
+        elif provider == "perplexity":
+            api_key = provider_api_keys.get("perplexity")
+            try:
+                service = SonarService(api_key=api_key, model=base_model_name)
+                async for chunk in service.stream_chat_completion(
+                    messages=messages,
+                    model=base_model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                ):
+                    # Pass through the SSE chunks directly since the Sonar service
+                    # already formats them properly
+                    yield chunk
+            except ValueError as e:
+                 error_payload = {"error": {"message": f"Perplexity API Key Error: {e}", "type": "authentication_error", "code": 401}}
+                 yield f"data: {json.dumps(error_payload)}\n\n"
+            except HTTPException as e:
+                 error_payload = {"error": {"message": f"Perplexity Error: {e.detail}", "type": "api_error", "code": e.status_code}}
+                 yield f"data: {json.dumps(error_payload)}\n\n"
+            except Exception as e:
+                logging.exception(f"Error streaming from Perplexity for model {original_model_name}: {e}")
+                error_payload = {"error": {"message": f"Error streaming from Perplexity Sonar: {e}", "type": "internal_server_error", "code": 500}}
                 yield f"data: {json.dumps(error_payload)}\n\n"
 
         else:

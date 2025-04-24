@@ -24,7 +24,8 @@ async def generate_chat_response(
     request_body: ChatRequest,
     x_google_api_key: str | None = Header(None, alias="X-Google-API-Key"),
     x_xai_api_key: str | None = Header(None, alias="X-xAI-API-Key"),
-    x_gigachat_api_key: str | None = Header(None, alias="X-GigaChat-API-Key") # Add GigaChat key header
+    x_gigachat_api_key: str | None = Header(None, alias="X-GigaChat-API-Key"), # Add GigaChat key header
+    x_perplexity_api_key: str | None = Header(None, alias="X-Perplexity-API-Key") # Add Perplexity key header
 ):
     """
     Receives a user message and optional chat history, then returns
@@ -36,6 +37,7 @@ async def generate_chat_response(
         google_key = x_google_api_key or settings.GOOGLE_AI_STUDIO_API_KEY
         grok_key = x_xai_api_key or settings.XAI_API_KEY
         gigachat_key = x_gigachat_api_key or settings.GIGACHAT_AUTH_KEY # Prioritize header
+        perplexity_key = x_perplexity_api_key or settings.PERPLEXITY_API_KEY # Prioritize header
 
         if google_key:
             provider_api_keys["google"] = google_key
@@ -43,6 +45,8 @@ async def generate_chat_response(
             provider_api_keys["grok"] = grok_key
         if gigachat_key: # Add GigaChat key if available
             provider_api_keys["gigachat"] = gigachat_key
+        if perplexity_key: # Add Perplexity key if available
+            provider_api_keys["perplexity"] = perplexity_key
 
         # Use ModelRouter to route the request
         response_text, model_used = await ModelRouter.route_simple_chat(

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # --- App Info ---
     APP_NAME: str = "AI Model Gateway"
     APP_VERSION: str = "1.0.0"
-    APP_DESCRIPTION: str = "Gateway service for multiple AI models including Gemini, Grok, Cloud Vision, GigaChat, etc."
+    APP_DESCRIPTION: str = "Gateway service for multiple AI models including Gemini, Grok, Cloud Vision, GigaChat, Perplexity Sonar, etc."
 
     # --- API ---
     API_V1_STR: str = "/api/v1"
@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     GIGACHAT_TOKEN_URL: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     GIGACHAT_CHAT_URL: str = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
     GIGACHAT_DEFAULT_MODEL: str = "GigaChat-Pro" # Default model if needed
+
+    # --- Perplexity Settings ---
+    PERPLEXITY_API_KEY: Optional[str] = None
+    PERPLEXITY_API_BASE_URL: str = "https://api.perplexity.ai"
+    SONAR_DEFAULT_MODEL: str = "sonar"
 
     # --- File Handling ---
     # Allowed content types for each service

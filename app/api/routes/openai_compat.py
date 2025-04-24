@@ -35,9 +35,10 @@ async def create_chat_completion(
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
     x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
     x_gigachat_api_key: Optional[str] = Header(None, alias="X-GigaChat-API-Key"),
+    x_perplexity_api_key: Optional[str] = Header(None, alias="X-Perplexity-API-Key"),
 ):
     """
-    Tạo chat completion tương thích với OpenAI, hỗ trợ Gemini, Grok và GigaChat.
+    Tạo chat completion tương thích với OpenAI, hỗ trợ Gemini, Grok, GigaChat, và Perplexity Sonar.
     Đọc request body trực tiếp để đảm bảo linh hoạt tối đa.
     """
     try:
@@ -54,6 +55,7 @@ async def create_chat_completion(
         google_key = x_google_api_key
         grok_key = x_xai_api_key
         gigachat_key = x_gigachat_api_key
+        perplexity_key = x_perplexity_api_key
 
         if google_key:
             provider_api_keys["google"] = google_key
@@ -61,6 +63,8 @@ async def create_chat_completion(
             provider_api_keys["grok"] = grok_key
         if gigachat_key:
             provider_api_keys["gigachat"] = gigachat_key
+        if perplexity_key:
+            provider_api_keys["perplexity"] = perplexity_key
 
         # Định tuyến tới mô hình phù hợp
         if stream:
@@ -112,7 +116,7 @@ async def create_chat_completion(
 async def list_models(
     user_info: Dict[str, Any] = Depends(verify_api_key)
 ):
-    """Liệt kê các mô hình được hỗ trợ (Gemini, Grok, GigaChat) với tiền tố provider."""
+    """Liệt kê các mô hình được hỗ trợ (Gemini, Grok, GigaChat, Perplexity Sonar) với tiền tố provider."""
     # Lấy settings để truy cập model names nếu cần (hoặc hardcode như hiện tại)
     # settings = get_settings() # Uncomment if using settings for model IDs
 
@@ -153,6 +157,13 @@ async def list_models(
         ModelInfo(id="GigaChat-Pro", created=1700000011, owned_by="salutedevices"),
         ModelInfo(id="GigaChat-Pro-preview", created=1700000012, owned_by="salutedevices"),
         ModelInfo(id="GigaChat-preview", created=1700000013, owned_by="salutedevices"),
+        # Perplexity Sonar Models
+        ModelInfo(id="sonar", created=1717000000, owned_by="perplexity"),
+        ModelInfo(id="sonar-pro", created=1717000001, owned_by="perplexity"),
+        ModelInfo(id="sonar-reasoning", created=1717000002, owned_by="perplexity"),
+        ModelInfo(id="sonar-reasoning-pro", created=1717000003, owned_by="perplexity"),
+        ModelInfo(id="sonar-deep-research", created=1717000004, owned_by="perplexity"),
+        ModelInfo(id="r1-1776", created=1717000005, owned_by="perplexity"),
     ]
 
     # Add provider prefix to the model ID for display purposes
@@ -165,6 +176,8 @@ async def list_models(
             prefix = "x-ai/"
         elif model.owned_by == "salutedevices":
             prefix = "sber/" # Changed prefix to sber/
+        elif model.owned_by == "perplexity":
+            prefix = "perplexity/"
         display_models.append(
             ModelInfo(
                 id=f"{prefix}{model.id}",
