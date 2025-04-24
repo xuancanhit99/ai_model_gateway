@@ -124,6 +124,7 @@ async def list_models(
         # Gemini Models (Updated list)
         ModelInfo(id="gemini-2.5-flash-preview-04-17", created=1713000000, owned_by="google"),
         ModelInfo(id="gemini-2.5-pro-preview-03-25", created=1711000000, owned_by="google"),
+        ModelInfo(id="gemini-2.5-pro-exp-03-25", created=1711000100, owned_by="google"),
         ModelInfo(id="gemini-2.0-flash", created=1709000000, owned_by="google"),
         ModelInfo(id="gemini-2.0-flash-lite", created=1709000001, owned_by="google"),
         # ModelInfo(id="gemini-1.5-flash", created=1708000000, owned_by="google"),
