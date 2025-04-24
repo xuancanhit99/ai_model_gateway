@@ -1,6 +1,6 @@
 # 🌐 AI Model Gateway
 
-A unified API gateway for accessing multiple AI models including Gemini, Grok, and GigaChat.
+A unified API gateway for accessing multiple AI models including Gemini, Grok, GigaChat, and Perplexity Sonar.
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.12-009688.svg)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
@@ -14,6 +14,7 @@ AI Model Gateway is a service that provides a unified API interface to interact 
 - **Gemini AI models** (Google)
 - **Grok AI models** (xAI)
 - **GigaChat models** (Sber)
+- **Sonar models** (Perplexity AI)
 
 Key features:
 - OpenAI-compatible API interface

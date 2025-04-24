@@ -26,6 +26,7 @@ For model-specific API keys, you can provide them via headers:
 X-Google-API-Key: YOUR_GOOGLE_API_KEY
 X-xAI-API-Key: YOUR_XAI_API_KEY
 X-GigaChat-API-Key: YOUR_GIGACHAT_API_KEY
+X-Perplexity-API-Key: YOUR_PERPLEXITY_API_KEY
 ```
 
 If not provided, the service will fall back to the API keys specified in the `.env` file.
@@ -65,6 +66,7 @@ Generate text responses using the selected AI model.
 - `X-Google-API-Key: YOUR_KEY` (optional)
 - `X-xAI-API-Key: YOUR_KEY` (optional)
 - `X-GigaChat-API-Key: YOUR_KEY` (optional)
+- `X-Perplexity-API-Key: YOUR_KEY` (optional)
 
 **Request Body**:
 ```json
@@ -87,7 +89,7 @@ Generate text responses using the selected AI model.
 **Parameters**:
 - `message` (string, required): The user message to generate a response for
 - `history` (array, optional): Previous message history for context
-- `model` (string, optional): Specific model to use (e.g., "gemini-2.5-pro-exp-03-25", "grok-2-1212", "GigaChat-Pro")
+- `model` (string, optional): Specific model to use (e.g., "gemini-2.5-pro-exp-03-25", "grok-2-1212", "GigaChat-Pro", "sonar", "sonar-pro")
 
 **Response Example**:
 ```json
@@ -140,6 +142,7 @@ Generate chat completions in a format compatible with OpenAI's API.
 - `X-Google-API-Key: YOUR_KEY` (optional)
 - `X-xAI-API-Key: YOUR_KEY` (optional)
 - `X-GigaChat-API-Key: YOUR_KEY` (optional)
+- `X-Perplexity-API-Key: YOUR_KEY` (optional)
 
 **Request Body**:
 ```json
@@ -161,6 +164,36 @@ Generate chat completions in a format compatible with OpenAI's API.
 - `temperature` (number, optional): Controls randomness (0-1)
 - `max_tokens` (integer, optional): Maximum tokens in response
 - `stream` (boolean, optional): Stream response tokens if true
+
+**Request Body Examples**:
+
+Using Google Gemini model:
+```json
+{
+  "model": "google/gemini-2.5-pro-exp-03-25",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is quantum computing?"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1000,
+  "stream": false
+}
+```
+
+Using Perplexity Sonar model:
+```json
+{
+  "model": "perplexity/sonar-pro",
+  "messages": [
+    {"role": "system", "content": "You are a helpful, precise, and research-focused assistant."},
+    {"role": "user", "content": "Summarize the latest research on large language models."}
+  ],
+  "temperature": 0.2,
+  "max_tokens": 2000,
+  "stream": false
+}
+```
 
 **Response Example (non-streaming)**:
 ```json

@@ -1,6 +1,6 @@
 # 🌐 AI Model Gateway
 
-Cổng API thống nhất để truy cập nhiều mô hình AI khác nhau bao gồm Gemini, Grok, và GigaChat.
+Cổng API thống nhất để truy cập nhiều mô hình AI khác nhau bao gồm Gemini, Grok, GigaChat, và Perplexity Sonar.
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.12-009688.svg)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
@@ -14,6 +14,7 @@ AI Model Gateway là một dịch vụ cung cấp giao diện API thống nhất
 - **Các mô hình Gemini AI** (Google)
 - **Các mô hình Grok AI** (xAI)
 - **Các mô hình GigaChat** (Sber)
+- **Các mô hình Sonar** (Perplexity AI)
 
 Tính năng chính:
 - Giao diện API tương thích OpenAI
@@ -95,6 +96,11 @@ GIGACHAT_SCOPE=GIGACHAT_API_PERS
 GIGACHAT_TOKEN_URL=https://ngw.devices.sberbank.ru:9443/api/v2/oauth
 GIGACHAT_CHAT_URL=https://gigachat.devices.sberbank.ru/api/v1/chat/completions
 GIGACHAT_DEFAULT_MODEL=GigaChat-Pro
+
+# Cài đặt Perplexity
+PERPLEXITY_API_KEY=your_perplexity_api_key
+PERPLEXITY_API_BASE_URL=https://api.perplexity.ai
+SONAR_DEFAULT_MODEL=sonar
 ```
 
 ## 📚 Tài liệu API
@@ -136,6 +142,14 @@ Dịch vụ hỗ trợ nhiều mô hình từ các nhà cung cấp khác nhau:
 - GigaChat-2
 - GigaChat-2-Pro
 - Và các mô hình khác...
+
+### 🔵 Mô hình Perplexity Sonar
+- sonar
+- sonar-pro
+- sonar-reasoning
+- sonar-reasoning-pro
+- sonar-deep-research
+- r1-1776
 
 Để xem danh sách đầy đủ các mô hình được hỗ trợ, sử dụng endpoint `/v1/models`.
 

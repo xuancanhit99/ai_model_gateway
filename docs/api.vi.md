@@ -26,6 +26,7 @@ Authorization: Bearer sk-openhyper123456789abcdef
 X-Google-API-Key: YOUR_GOOGLE_API_KEY
 X-xAI-API-Key: YOUR_XAI_API_KEY
 X-GigaChat-API-Key: YOUR_GIGACHAT_API_KEY
+X-Perplexity-API-Key: YOUR_PERPLEXITY_API_KEY
 ```
 
 Nếu không được cung cấp, dịch vụ sẽ sử dụng các API key được chỉ định trong file `.env`.
@@ -65,6 +66,7 @@ Tạo phản hồi văn bản sử dụng mô hình AI đã chọn.
 - `X-Google-API-Key: YOUR_KEY` (tùy chọn)
 - `X-xAI-API-Key: YOUR_KEY` (tùy chọn)
 - `X-GigaChat-API-Key: YOUR_KEY` (tùy chọn)
+- `X-Perplexity-API-Key: YOUR_KEY` (tùy chọn)
 
 **Body của Request**:
 ```json
@@ -87,7 +89,7 @@ Tạo phản hồi văn bản sử dụng mô hình AI đã chọn.
 **Các tham số**:
 - `message` (chuỗi, bắt buộc): Tin nhắn người dùng để tạo phản hồi
 - `history` (mảng, tùy chọn): Lịch sử tin nhắn trước đó để cung cấp ngữ cảnh
-- `model` (chuỗi, tùy chọn): Mô hình cụ thể để sử dụng (ví dụ: "gemini-2.5-pro-exp-03-25", "grok-2-1212", "GigaChat-Pro")
+- `model` (chuỗi, tùy chọn): Mô hình cụ thể để sử dụng (ví dụ: "gemini-2.5-pro-exp-03-25", "grok-2-1212", "GigaChat-Pro", "sonar", "sonar-pro")
 
 **Ví dụ phản hồi**:
 ```json
@@ -140,8 +142,11 @@ Tạo chat completions theo định dạng tương thích với API của OpenAI
 - `X-Google-API-Key: YOUR_KEY` (tùy chọn)
 - `X-xAI-API-Key: YOUR_KEY` (tùy chọn)
 - `X-GigaChat-API-Key: YOUR_KEY` (tùy chọn)
+- `X-Perplexity-API-Key: YOUR_KEY` (tùy chọn)
 
-**Body của Request**:
+**Ví dụ Body Request**:
+
+Sử dụng mô hình Google Gemini:
 ```json
 {
   "model": "google/gemini-2.5-pro-exp-03-25",
@@ -151,6 +156,20 @@ Tạo chat completions theo định dạng tương thích với API của OpenAI
   ],
   "temperature": 0.7,
   "max_tokens": 1000,
+  "stream": false
+}
+```
+
+Sử dụng mô hình Perplexity Sonar:
+```json
+{
+  "model": "perplexity/sonar-pro",
+  "messages": [
+    {"role": "system", "content": "Bạn là một trợ lý hữu ích, chính xác và tập trung vào nghiên cứu."},
+    {"role": "user", "content": "Tóm tắt các nghiên cứu mới nhất về mô hình ngôn ngữ lớn."}
+  ],
+  "temperature": 0.2,
+  "max_tokens": 2000,
   "stream": false
 }
 ```
@@ -237,6 +256,12 @@ Lấy danh sách các mô hình có sẵn.
       "object": "model",
       "created": 1700000011,
       "owned_by": "salutedevices"
+    },
+    {
+      "id": "perplexity/sonar",
+      "object": "model",
+      "created": 1717000000,
+      "owned_by": "perplexity"
     },
     ... các mô hình khác ...
   ]
