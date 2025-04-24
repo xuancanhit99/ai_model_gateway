@@ -1,6 +1,6 @@
 # app/models/schemas.py
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, HttpUrl
+from typing import List, Optional, Dict, Any, Literal # Import Literal
 import time
 import uuid
 
@@ -69,3 +69,45 @@ class ModelInfo(BaseModel):
 class ModelList(BaseModel):
     object: str = "list"
     data: List[ModelInfo]
+
+
+class GigaChatMessageInput(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str
+
+class GigaChatCompletionRequest(BaseModel):
+    model: str
+    messages: List[GigaChatMessageInput]
+    temperature: Optional[float] = Field(default=0.7, gt=0.0, le=2.0)
+    top_p: Optional[float] = None
+    n: Optional[int] = None
+    stream: Optional[bool] = False
+    max_tokens: Optional[int] = None
+    repetition_penalty: Optional[float] = None
+    update_interval: Optional[int] = None
+
+class GigaChatMessageOutput(BaseModel):
+    role: Literal["assistant"]
+    content: str
+
+class GigaChatChoice(BaseModel):
+    index: int
+    message: Optional[GigaChatMessageOutput] = None # For non-streaming
+    delta: Optional[dict] = None # For streaming
+    finish_reason: Optional[str] = None
+
+class GigaChatUsage(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+class GigaChatCompletionResponse(BaseModel):
+    choices: List[GigaChatChoice]
+    created: int
+    model: str
+    usage: Optional[GigaChatUsage] = None
+    object: Optional[str] = None # e.g., "chat.completion" or "chat.completion.chunk"
+
+class TokenResponse(BaseModel):
+    access_token: str
+    expires_at: int # Assuming it's a timestamp

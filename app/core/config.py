@@ -3,6 +3,9 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
 from typing import List, Optional
+from dotenv import load_dotenv
+
+load_dotenv() # Ensure .env is loaded
 
 class Settings(BaseSettings):
     """Cài đặt chung cho ứng dụng"""
@@ -24,6 +27,13 @@ class Settings(BaseSettings):
     XAI_API_BASE_URL: str = "https://api.x.ai/v1" # Default Grok API base
     GROK_CHAT_MODEL_NAME: str = "grok-2-1212" # Example text model
     GROK_VISION_MODEL_NAME: str = "grok-2-vision-1212" # Example vision model
+
+    # --- GigaChat Settings ---
+    GIGACHAT_AUTH_KEY: Optional[str] = None # Authorization key for GigaChat (e.g., from .env or header)
+    GIGACHAT_SCOPE: str = "GIGACHAT_API_PERS"
+    GIGACHAT_TOKEN_URL: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    GIGACHAT_CHAT_URL: str = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions" # Removed trailing '='
+    GIGACHAT_DEFAULT_MODEL: str = "GigaChat-Pro" # Default model if needed
 
     # --- File Handling ---
     # Allowed content types for each service

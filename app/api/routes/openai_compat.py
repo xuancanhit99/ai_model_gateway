@@ -104,7 +104,7 @@ async def create_chat_completion(
 async def list_models(
     user_info: Dict[str, Any] = Depends(verify_api_key)
 ):
-    """Liệt kê các mô hình được hỗ trợ (Gemini và Grok) với tiền tố provider."""
+    """Liệt kê các mô hình được hỗ trợ (Gemini, Grok, GigaChat) với tiền tố provider."""
     # Lấy settings để truy cập model names nếu cần (hoặc hardcode như hiện tại)
     # settings = get_settings() # Uncomment if using settings for model IDs
 
@@ -115,11 +115,11 @@ async def list_models(
         ModelInfo(id="gemini-2.0-flash", created=1709000000, owned_by="google"),
         ModelInfo(id="gemini-2.0-flash-lite", created=1709000001, owned_by="google"),
         ModelInfo(id="gemini-1.5-flash", created=1708000000, owned_by="google"),
-        ModelInfo(id="gemini-1.5-flash-8b", created=1708000001, owned_by="google"),
+        # ModelInfo(id="gemini-1.5-flash-8b", created=1708000001, owned_by="google"),
         ModelInfo(id="gemini-1.5-pro", created=1707000000, owned_by="google"),
-        ModelInfo(id="gemini-embedding-exp", created=1706000000, owned_by="google"),
+        # ModelInfo(id="gemini-embedding-exp", created=1706000000, owned_by="google"),
         ModelInfo(id="imagen-3.0-generate-002", created=1714000000, owned_by="google"),
-        ModelInfo(id="veo-2.0-generate-001", created=1715000000, owned_by="google"),
+        # ModelInfo(id="veo-2.0-generate-001", created=1715000000, owned_by="google"),
         ModelInfo(id="gemini-2.0-flash-live-001", created=1716000000, owned_by="google"),
         # Grok Models (Updated list without prefix)
         ModelInfo(id="grok-2-1212", created=1710000000, owned_by="xai"),
@@ -130,12 +130,33 @@ async def list_models(
         ModelInfo(id="grok-3-mini-fast-beta", created=1710000005, owned_by="xai"),
         ModelInfo(id="grok-beta", created=1710000006, owned_by="xai"),
         ModelInfo(id="grok-vision-beta", created=1710000007, owned_by="xai"),
+        # GigaChat Models
+        ModelInfo(id="GigaChat", created=1700000000, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-2", created=1700000001, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-2-Max", created=1700000002, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-2-Max-preview", created=1700000003, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-2-Pro", created=1700000004, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-2-Pro-preview", created=1700000005, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-2-preview", created=1700000006, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-Max", created=1700000007, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-Max-preview", created=1700000008, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-Plus", created=1700000009, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-Plus-preview", created=1700000010, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-Pro", created=1700000011, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-Pro-preview", created=1700000012, owned_by="salutedevices"),
+        ModelInfo(id="GigaChat-preview", created=1700000013, owned_by="salutedevices"),
     ]
 
     # Add provider prefix to the model ID for display purposes
     display_models = []
     for model in raw_models:
-        prefix = "google/" if model.owned_by == "google" else "x-ai/" if model.owned_by == "xai" else ""
+        prefix = ""
+        if model.owned_by == "google":
+            prefix = "google/"
+        elif model.owned_by == "xai":
+            prefix = "x-ai/"
+        elif model.owned_by == "salutedevices":
+            prefix = "sber/" # Changed prefix to sber/
         display_models.append(
             ModelInfo(
                 id=f"{prefix}{model.id}",
@@ -143,6 +164,5 @@ async def list_models(
                 owned_by=model.owned_by
             )
         )
-
 
     return ModelList(data=display_models)

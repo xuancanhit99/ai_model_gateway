@@ -4,6 +4,7 @@ import json
 import re # Import re for regex operations
 from app.services.gemini import GeminiService
 from app.services.grok import GrokService # Import GrokService
+from app.services.gigachat_service import GigaChatService # Import GigaChatService
 from app.models.schemas import ChatMessage
 from fastapi import HTTPException, status # Import HTTPException
 import time
@@ -15,26 +16,28 @@ class ModelRouter:
 
     @staticmethod
     def _strip_provider_prefix(model_id: str) -> str:
-        """Removes provider prefix (e.g., 'google/', 'x-ai/') from model ID."""
-        return re.sub(r"^(google|x-ai)/", "", model_id)
+        """Removes provider prefix (e.g., 'google/', 'x-ai/', 'sber/') from model ID."""
+        return re.sub(r"^(google|x-ai|sber)/", "", model_id) # Updated regex
 
     @staticmethod
     def _determine_provider(model: str) -> str:
-        """Determines the provider ('google' or 'x-ai') based on model name."""
+        """Determines the provider ('google', 'x-ai', or 'gigachat') based on model name/prefix."""
         if not model:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Model name must be specified.")
 
-        if "gemini" in model.lower():
+        # Check prefix first for explicit routing
+        if model.startswith("google/") or "gemini" in model.lower():
             return "google"
-        elif "grok" in model.lower():
+        elif model.startswith("x-ai/") or "grok" in model.lower():
             return "x-ai"
+        elif model.startswith("sber/") or "gigachat" in model.lower(): # Check for sber/ prefix or gigachat in name
+            return "gigachat" # Internal provider name remains gigachat
         # Add other potential provider checks here if needed
-        # elif "claude" in model.lower(): return "anthropic"
         else:
             logging.error(f"Could not determine provider for model: {model}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Could not determine the provider for the requested model '{model}'. Supported models contain 'gemini' or 'grok'."
+                detail=f"Could not determine the provider for the requested model '{model}'. Supported models contain 'gemini', 'grok', or 'gigachat'."
             )
 
     @staticmethod
@@ -63,6 +66,8 @@ class ModelRouter:
         original_model_name = model
         base_model_name = ModelRouter._strip_provider_prefix(model) # Strip provider prefix
         provider = ModelRouter._determine_provider(model)
+
+        logging.info(f"Routing chat completion request for model: {original_model_name} (Provider: {provider}, Base Model: {base_model_name})")
 
         # --- Route based on provider derived from prefix ---
         if provider == "google":
@@ -129,6 +134,30 @@ class ModelRouter:
             except Exception as e:
                 logging.exception(f"Error processing Grok request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing request with Grok: {e}")
+
+        elif provider == "gigachat":
+            auth_key = provider_api_keys.get("gigachat") # Key name is 'gigachat' in dict
+            try:
+                # GigaChatService might need the auth key during initialization or method call
+                service = GigaChatService(auth_key=auth_key)
+                # Assuming GigaChatService.create_chat_completion returns OpenAI format
+                response_payload = await service.create_chat_completion(
+                    model=base_model_name, # Pass BASE model name
+                    messages=messages, # Pass OpenAI format directly
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False
+                )
+                # Ensure the response payload uses the original model name
+                response_payload["model"] = original_model_name
+                return response_payload
+            except ValueError as e: # Catch auth key error from GigaChatService init/method
+                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"GigaChat Auth Key Error: {e}")
+            except HTTPException as e: # Re-raise specific HTTP exceptions from service
+                raise e
+            except Exception as e:
+                logging.exception(f"Error processing GigaChat request for model {original_model_name}: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing request with GigaChat: {e}")
 
         # Safeguard: This should not be reached if _determine_provider works correctly
         logging.error(f"Internal routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
@@ -281,6 +310,30 @@ class ModelRouter:
                 logging.exception(f"Error processing simple Grok chat request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with Grok: {e}")
 
+        elif provider == "gigachat":
+            auth_key = provider_api_keys.get("gigachat")
+            try:
+                service = GigaChatService(auth_key=auth_key)
+                # Convert simple format to OpenAI messages for GigaChat
+                openai_messages = ModelRouter._convert_simple_to_openai(message, history)
+                # Call GigaChat's completion method with BASE model name
+                response_payload = await service.create_chat_completion(
+                    model=base_model_name,
+                    messages=openai_messages,
+                    stream=False # Simple chat doesn't stream
+                )
+                # Extract response text
+                response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+                # Return ORIGINAL model name
+                return response_text, original_model_name
+            except ValueError as e:
+                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"GigaChat Auth Key Error: {e}")
+            except HTTPException as e:
+                raise e
+            except Exception as e:
+                logging.exception(f"Error processing simple GigaChat chat request for model {original_model_name}: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with GigaChat: {e}")
+
         # Safeguard: This should not be reached if _determine_provider works correctly
         logging.error(f"Internal routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
@@ -312,6 +365,8 @@ class ModelRouter:
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
             return # Stop execution
+
+        logging.info(f"Routing stream request for model: {original_model_name} (Provider: {provider}, Base Model: {base_model_name})")
 
         # --- Route based on provider derived from prefix ---
         if provider == "google":
@@ -392,6 +447,42 @@ class ModelRouter:
             except Exception as e:
                  logging.exception(f"Error streaming from Grok for model {original_model_name}: {e}")
                  error_payload = {"error": {"message": f"Error streaming from Grok: {e}", "type": "internal_server_error", "code": 500}}
+                 yield f"data: {json.dumps(error_payload)}\n\n"
+
+        elif provider == "gigachat":
+            auth_key = provider_api_keys.get("gigachat")
+            try:
+                service = GigaChatService(auth_key=auth_key)
+                # Call GigaChat's streaming method with BASE model name
+                async for chunk in service.stream_chat_completion(
+                    model=base_model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                ):
+                    # TODO: Verify GigaChat streaming output and adjust chunk modification if necessary.
+                    # Assuming GigaChatService yields SSE formatted strings compatible with OpenAI
+                    # or needs modification here.
+                    # Example modification (if chunk is dict and needs model name override):
+                    # try:
+                    #     chunk_data = json.loads(chunk.split("data: ", 1)[1])
+                    #     chunk_data['model'] = original_model_name
+                    #     yield f"data: {json.dumps(chunk_data)}\n\n"
+                    # except:
+                    #     yield chunk # Yield original if parsing fails
+                    yield chunk # Forward the SSE formatted chunk
+            except ValueError as e: # Catch auth key error
+                 error_payload = {"error": {"message": f"GigaChat Auth Key Error: {e}", "type": "authentication_error", "code": 401}}
+                 yield f"data: {json.dumps(error_payload)}\n\n"
+            except NotImplementedError as e: # Catch if streaming is not implemented
+                 error_payload = {"error": {"message": f"GigaChat Error: {e}", "type": "invalid_request_error", "code": 501}}
+                 yield f"data: {json.dumps(error_payload)}\n\n"
+            except HTTPException as e: # Catch specific errors from service
+                 error_payload = {"error": {"message": f"GigaChat Error: {e.detail}", "type": "api_error", "code": e.status_code}}
+                 yield f"data: {json.dumps(error_payload)}\n\n"
+            except Exception as e:
+                 logging.exception(f"Error streaming from GigaChat for model {original_model_name}: {e}")
+                 error_payload = {"error": {"message": f"Error streaming from GigaChat: {e}", "type": "internal_server_error", "code": 500}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
 
         # Safeguard: This should not be reached if _determine_provider works correctly
