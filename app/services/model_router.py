@@ -1,15 +1,19 @@
 # app/services/model_router.py
-from typing import Dict, Any, Tuple, List, Optional, AsyncGenerator # Add AsyncGenerator
+from typing import Dict, Any, Tuple, List, Optional, AsyncGenerator
 import json
-import re # Import re for regex operations
+import re
+from fastapi import HTTPException, status, UploadFile
+import mimetypes
 from app.services.gemini import GeminiService
-from app.services.grok import GrokService # Import GrokService
-from app.services.gigachat_service import GigaChatService # Import GigaChatService
+from app.services.grok import GrokService
+from app.services.gigachat_service import GigaChatService
 from app.models.schemas import ChatMessage
-from fastapi import HTTPException, status # Import HTTPException
 import time
 import uuid
-import logging # Add logging
+import logging
+from app.core.config import get_settings
+
+settings = get_settings()
 
 class ModelRouter:
     """Lớp chịu trách nhiệm định tuyến các yêu cầu đến mô hình AI thích hợp."""
@@ -17,7 +21,7 @@ class ModelRouter:
     @staticmethod
     def _strip_provider_prefix(model_id: str) -> str:
         """Removes provider prefix (e.g., 'google/', 'x-ai/', 'sber/') from model ID."""
-        return re.sub(r"^(google|x-ai|sber)/", "", model_id) # Updated regex
+        return re.sub(r"^(google|x-ai|sber)/", "", model_id)
 
     @staticmethod
     def _determine_provider(model: str) -> str:
@@ -25,20 +29,107 @@ class ModelRouter:
         if not model:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Model name must be specified.")
 
-        # Check prefix first for explicit routing
         if model.startswith("google/") or "gemini" in model.lower():
             return "google"
         elif model.startswith("x-ai/") or "grok" in model.lower():
             return "x-ai"
-        elif model.startswith("sber/") or "gigachat" in model.lower(): # Check for sber/ prefix or gigachat in name
-            return "gigachat" # Internal provider name remains gigachat
-        # Add other potential provider checks here if needed
+        elif model.startswith("sber/") or "gigachat" in model.lower():
+            return "gigachat"
         else:
             logging.error(f"Could not determine provider for model: {model}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Could not determine the provider for the requested model '{model}'. Supported models contain 'gemini', 'grok', or 'gigachat'."
             )
+
+    @staticmethod
+    async def route_vision_extraction(
+        model: str,
+        image_file: UploadFile,
+        prompt: Optional[str],
+        provider_api_keys: Dict[str, str] = None
+    ) -> Tuple[str, str]:
+        """
+        Routes vision extraction requests to the appropriate model (Gemini or Grok).
+
+        Args:
+            model: The requested model name (e.g., 'google/gemini-pro-vision', 'x-ai/grok-vision').
+            image_file: The uploaded image file.
+            prompt: Optional custom prompt for extraction.
+            provider_api_keys: Dictionary containing API keys ('google', 'grok').
+
+        Returns:
+            Tuple of (extracted_text, model_used)
+        """
+        provider_api_keys = provider_api_keys or {}
+        logging.info(f"Routing vision extraction request for model: {model}")
+
+        original_model_name = model
+        base_model_name = ModelRouter._strip_provider_prefix(model)
+        provider = ModelRouter._determine_provider(model)
+
+        if provider not in ["google", "x-ai"]:
+            logging.error(f"Provider '{provider}' determined for model '{model}' does not support vision tasks.")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model '{model}' belongs to provider '{provider}' which does not support vision extraction."
+            )
+
+        if provider == "google":
+            api_key = provider_api_keys.get("google")
+            try:
+                image_bytes = await image_file.read()
+                await image_file.seek(0)
+
+                mime_type = image_file.content_type
+                if mime_type not in settings.GEMINI_ALLOWED_CONTENT_TYPES:
+                    guessed_type, _ = mimetypes.guess_type(image_file.filename or "image.bin")
+                    if guessed_type in settings.GEMINI_ALLOWED_CONTENT_TYPES:
+                        mime_type = guessed_type
+                    else:
+                        logging.error(f"Unsupported image type '{mime_type}' for Gemini.")
+                        raise HTTPException(
+                            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail=f"Unsupported image type '{mime_type}' for Gemini. Allowed: {', '.join(settings.GEMINI_ALLOWED_CONTENT_TYPES)}"
+                        )
+
+                service = GeminiService(api_key=api_key, model=base_model_name)
+                extracted_text, model_used_by_service = await service.extract_text(
+                    image_data=image_bytes,  # Changed keyword argument name
+                    content_type=mime_type,
+                    prompt=prompt
+                )
+                return extracted_text, original_model_name
+
+            except ValueError as e:
+                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini API Key Error: {e}")
+            except HTTPException as e:
+                raise e
+            except Exception as e:
+                logging.exception(f"Error processing Gemini vision request for model {original_model_name}: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing vision request with Gemini: {e}")
+
+        elif provider == "x-ai":
+            api_key = provider_api_keys.get("grok")
+            try:
+                service = GrokService(api_key=api_key)
+                extracted_text, model_used_by_service = await service.extract_text_from_image(
+                    image_file=image_file,
+                    model=base_model_name,
+                    prompt=prompt
+                )
+                return extracted_text, original_model_name
+
+            except ValueError as e:
+                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Grok API Key Error: {e}")
+            except HTTPException as e:
+                raise e
+            except Exception as e:
+                logging.exception(f"Error processing Grok vision request for model {original_model_name}: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing vision request with Grok: {e}")
+
+        logging.error(f"Internal vision routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during vision model routing.")
 
     @staticmethod
     async def route_chat_completion(
@@ -64,31 +155,25 @@ class ModelRouter:
         provider_api_keys = provider_api_keys or {}
         
         original_model_name = model
-        base_model_name = ModelRouter._strip_provider_prefix(model) # Strip provider prefix
+        base_model_name = ModelRouter._strip_provider_prefix(model)
         provider = ModelRouter._determine_provider(model)
 
         logging.info(f"Routing chat completion request for model: {original_model_name} (Provider: {provider}, Base Model: {base_model_name})")
 
-        # --- Route based on provider derived from prefix ---
         if provider == "google":
-            # Chuyển đổi messages thành định dạng phù hợp cho Gemini
             prompt, history = ModelRouter._convert_messages(messages)
             api_key = provider_api_keys.get("google")
             try:
-                # Pass BASE model name to the service
                 service = GeminiService(api_key=api_key, model=base_model_name)
                 response_text, model_used_by_service = await service.generate_text_response(
                     message=prompt,
                     history=history,
-                    model=base_model_name # Pass BASE model name
+                    model=base_model_name
                 )
 
-                # --- Format Gemini response to OpenAI ---
-                # Ensure response_text is a string
                 if response_text is None: response_text = ""
                 elif not isinstance(response_text, str): response_text = str(response_text)
 
-                # Estimate tokens (simple) - TODO: Improve token estimation
                 prompt_tokens = sum(len(msg.get("content", "").split()) for msg in messages if isinstance(msg.get("content"), str)) * 4
                 completion_tokens = len(response_text.split()) * 4
                 total_tokens = prompt_tokens + completion_tokens
@@ -97,69 +182,62 @@ class ModelRouter:
                     "id": f"chatcmpl-gemini-{uuid.uuid4().hex}",
                     "object": "chat.completion",
                     "created": int(time.time()),
-                    "model": original_model_name, # Use the original model name in response
+                    "model": original_model_name,
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": response_text}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens},
                 }
                 return response_payload
 
-            except ValueError as e: # Catch API key error from GeminiService init
+            except ValueError as e:
                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini API Key Error: {e}")
-            except HTTPException as e: # Re-raise specific HTTP exceptions from service
+            except HTTPException as e:
                 raise e
             except Exception as e:
                 logging.exception(f"Error processing Gemini request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing request with Gemini: {e}")
 
         elif provider == "x-ai":
-            api_key = provider_api_keys.get("grok") # Key name is 'grok' in dict
+            api_key = provider_api_keys.get("grok")
             try:
                 service = GrokService(api_key=api_key)
-                # GrokService method already returns OpenAI format
-                # Pass BASE model name to the service
                 response_payload = await service.create_chat_completion(
                     model=base_model_name,
-                    messages=messages, # Pass OpenAI format directly
+                    messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=False
                 )
-                # Ensure the response payload uses the original model name
                 response_payload["model"] = original_model_name
                 return response_payload
-            except ValueError as e: # Catch API key error from GrokService init
+            except ValueError as e:
                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Grok API Key Error: {e}")
-            except HTTPException as e: # Re-raise specific HTTP exceptions from service
+            except HTTPException as e:
                 raise e
             except Exception as e:
                 logging.exception(f"Error processing Grok request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing request with Grok: {e}")
 
         elif provider == "gigachat":
-            auth_key = provider_api_keys.get("gigachat") # Key name is 'gigachat' in dict
+            auth_key = provider_api_keys.get("gigachat")
             try:
-                # GigaChatService might need the auth key during initialization or method call
                 service = GigaChatService(auth_key=auth_key)
-                # Assuming GigaChatService.create_chat_completion returns OpenAI format
                 response_payload = await service.create_chat_completion(
-                    model=base_model_name, # Pass BASE model name
-                    messages=messages, # Pass OpenAI format directly
+                    model=base_model_name,
+                    messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=False
                 )
-                # Ensure the response payload uses the original model name
                 response_payload["model"] = original_model_name
                 return response_payload
-            except ValueError as e: # Catch auth key error from GigaChatService init/method
+            except ValueError as e:
                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"GigaChat Auth Key Error: {e}")
-            except HTTPException as e: # Re-raise specific HTTP exceptions from service
+            except HTTPException as e:
                 raise e
             except Exception as e:
                 logging.exception(f"Error processing GigaChat request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing request with GigaChat: {e}")
 
-        # Safeguard: This should not be reached if _determine_provider works correctly
         logging.error(f"Internal routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
     
@@ -172,7 +250,6 @@ class ModelRouter:
             Tuple gồm (prompt hiện tại, lịch sử trò chuyện)
         """
         history = []
-        # prompt = "" # Initialize later
         system_message = None
 
         if not messages:
@@ -183,20 +260,17 @@ class ModelRouter:
         if not valid_messages:
             return "", []
 
-        # Tìm system message (chỉ lấy cái đầu tiên nếu có nhiều)
         for msg in valid_messages:
             if msg["role"] == "system":
                 system_message = msg["content"]
                 break
 
-        # Xử lý tin nhắn user/assistant
         processed_indices = set()
         if system_message:
-            # Tìm index của system message để bỏ qua khi tạo history
             for i, msg in enumerate(valid_messages):
                 if msg["role"] == "system":
                     processed_indices.add(i)
-                    break # Chỉ xử lý system message đầu tiên
+                    break
 
         last_user_message_index = -1
         for i in range(len(valid_messages) - 1, -1, -1):
@@ -205,11 +279,8 @@ class ModelRouter:
                 break
 
         if last_user_message_index == -1:
-            # Không có tin nhắn user nào? Trả về prompt rỗng.
             return "", []
 
-        # Tin nhắn cuối cùng của user làm prompt
-        # Initialize prompt here, closer to usage
         prompt: str
         last_user_msg = valid_messages[last_user_message_index]
         prompt_content = last_user_msg["content"]
@@ -219,18 +290,14 @@ class ModelRouter:
             prompt = prompt_content
         processed_indices.add(last_user_message_index)
 
-        # Các tin nhắn còn lại làm history
         for i, msg in enumerate(valid_messages):
             if i not in processed_indices and msg["role"] != "system":
-                # Gemini dùng 'user' và 'model'
                 gemini_role = "user" if msg["role"] == "user" else "model"
                 history.append(ChatMessage(role=gemini_role, content=msg["content"]))
 
-        # Gemini API yêu cầu history xen kẽ user/model, bắt đầu bằng user
         final_history = []
         last_role = None
         for h_msg in history:
-            # Đơn giản hóa: Chỉ thêm nếu role khác role trước đó để tránh lỗi Gemini
             if h_msg.role != last_role:
                 final_history.append(h_msg)
                 last_role = h_msg.role
@@ -242,7 +309,6 @@ class ModelRouter:
         """Converts simple message/history to OpenAI message list."""
         openai_messages = []
         for msg in history:
-            # Assuming history roles are 'user' and 'model'/'assistant'
             role = "assistant" if msg.role == "model" else msg.role
             openai_messages.append({"role": role, "content": msg.content})
         openai_messages.append({"role": "user", "content": message})
@@ -260,23 +326,20 @@ class ModelRouter:
         logging.info(f"Routing simple chat request for model: {model}")
 
         original_model_name = model
-        base_model_name = ModelRouter._strip_provider_prefix(model) # Strip provider prefix
+        base_model_name = ModelRouter._strip_provider_prefix(model)
         provider = ModelRouter._determine_provider(model)
 
         if provider == "google":
             api_key = provider_api_keys.get("google")
             try:
-                # Pass BASE model name
                 service = GeminiService(api_key=api_key, model=base_model_name)
                 response_text, model_used_by_service = await service.generate_text_response(
                     message=message,
                     history=history,
-                    model=base_model_name # Explicitly pass BASE model name
+                    model=base_model_name
                 )
-                # Ensure response_text is a string
                 if response_text is None: response_text = ""
                 elif not isinstance(response_text, str): response_text = str(response_text)
-                # Return ORIGINAL model name
                 return response_text, original_model_name
             except ValueError as e:
                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini API Key Error: {e}")
@@ -287,20 +350,16 @@ class ModelRouter:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with Gemini: {e}")
 
         elif provider == "x-ai":
-            api_key = provider_api_keys.get("grok") # Key name is 'grok' in dict
+            api_key = provider_api_keys.get("grok")
             try:
                 service = GrokService(api_key=api_key)
-                # Convert simple format to OpenAI messages for Grok
                 openai_messages = ModelRouter._convert_simple_to_openai(message, history)
-                # Call Grok's completion method with BASE model name
                 response_payload = await service.create_chat_completion(
                     model=base_model_name,
                     messages=openai_messages,
-                    stream=False # Simple chat doesn't stream
+                    stream=False
                 )
-                # Extract response text
                 response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
-                # Return ORIGINAL model name
                 return response_text, original_model_name
             except ValueError as e:
                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Grok API Key Error: {e}")
@@ -314,17 +373,13 @@ class ModelRouter:
             auth_key = provider_api_keys.get("gigachat")
             try:
                 service = GigaChatService(auth_key=auth_key)
-                # Convert simple format to OpenAI messages for GigaChat
                 openai_messages = ModelRouter._convert_simple_to_openai(message, history)
-                # Call GigaChat's completion method with BASE model name
                 response_payload = await service.create_chat_completion(
                     model=base_model_name,
                     messages=openai_messages,
-                    stream=False # Simple chat doesn't stream
+                    stream=False
                 )
-                # Extract response text
                 response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
-                # Return ORIGINAL model name
                 return response_text, original_model_name
             except ValueError as e:
                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"GigaChat Auth Key Error: {e}")
@@ -334,7 +389,6 @@ class ModelRouter:
                 logging.exception(f"Error processing simple GigaChat chat request for model {original_model_name}: {e}")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with GigaChat: {e}")
 
-        # Safeguard: This should not be reached if _determine_provider works correctly
         logging.error(f"Internal routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
 
@@ -355,29 +409,24 @@ class ModelRouter:
         created_time = int(time.time())
 
         original_model_name = model
-        base_model_name = ModelRouter._strip_provider_prefix(model) # Strip provider prefix
+        base_model_name = ModelRouter._strip_provider_prefix(model)
         try:
             provider = ModelRouter._determine_provider(model)
         except HTTPException as e:
-            # Handle provider determination error within the stream
             logging.warning(f"Streaming requested for model with unknown provider: {model} - Error: {e.detail}")
             error_payload = {"error": {"message": e.detail, "type": "invalid_request_error", "code": e.status_code}}
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
-            return # Stop execution
+            return
 
         logging.info(f"Routing stream request for model: {original_model_name} (Provider: {provider}, Base Model: {base_model_name})")
 
-        # --- Route based on provider derived from prefix ---
         if provider == "google":
-            # Chuyển đổi messages thành định dạng phù hợp cho Gemini
             prompt, history = ModelRouter._convert_messages(messages)
             api_key = provider_api_keys.get("google")
             try:
-                # Pass BASE model name to the service
                 service = GeminiService(api_key=api_key, model=base_model_name)
                 first_chunk = True
-                # Call stream_text_response with the BASE model name
                 async for chunk_text in service.stream_text_response(
                     message=prompt, history=history, model=base_model_name
                 ):
@@ -385,7 +434,7 @@ class ModelRouter:
 
                     chunk_payload = {
                         "id": request_id, "object": "chat.completion.chunk", "created": created_time,
-                        "model": original_model_name, # Use original model name in chunk
+                        "model": original_model_name,
                         "choices": [{"index": 0, "delta": {}, "finish_reason": None}]
                     }
                     if first_chunk:
@@ -394,10 +443,9 @@ class ModelRouter:
                     chunk_payload["choices"][0]["delta"]["content"] = chunk_text
                     yield f"data: {json.dumps(chunk_payload, ensure_ascii=False)}\n\n"
 
-                # Send final chunk with finish reason
                 final_chunk_payload = {
                     "id": request_id, "object": "chat.completion.chunk", "created": created_time,
-                    "model": original_model_name, # Use original model name in final chunk
+                    "model": original_model_name,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
                 }
                 yield f"data: {json.dumps(final_chunk_payload, ensure_ascii=False)}\n\n"
@@ -405,7 +453,7 @@ class ModelRouter:
             except ValueError as e:
                  error_payload = {"error": {"message": f"Gemini API Key Error: {e}", "type": "authentication_error", "code": 401}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
-            except HTTPException as e: # Catch specific errors from service
+            except HTTPException as e:
                  error_payload = {"error": {"message": f"Gemini Error: {e.detail}", "type": "api_error", "code": e.status_code}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
             except Exception as e:
@@ -413,35 +461,21 @@ class ModelRouter:
                 error_payload = {"error": {"message": f"Error streaming from Gemini: {e}", "type": "internal_server_error", "code": 500}}
                 yield f"data: {json.dumps(error_payload)}\n\n"
 
-        elif provider == "x-ai": # Use provider check
-            api_key = provider_api_keys.get("grok") # Key name is 'grok' in dict
+        elif provider == "x-ai":
+            api_key = provider_api_keys.get("grok")
             try:
                 service = GrokService(api_key=api_key)
-                # Call Grok's streaming method with BASE model name
                 async for chunk in service.stream_chat_completion(
                     model=base_model_name,
-                    messages=messages, # Pass OpenAI format directly
+                    messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens
                 ):
-                     # Assuming GrokService.stream_chat_completion yields SSE formatted strings
-                     # We might need to parse the chunk, replace the model ID with original_model_name,
-                     # and re-serialize if Grok doesn't return the requested model name.
-                     # For now, let's assume Grok's stream includes a model field we can potentially override later if needed,
-                     # or that the client uses the initial request model. Forwarding for now.
-                     # TODO: Verify Grok streaming output and adjust chunk modification if necessary.
-                     # Example modification (if chunk is dict):
-                     # try:
-                     #     chunk_data = json.loads(chunk.split("data: ", 1)[1])
-                     #     chunk_data['model'] = original_model_name
-                     #     yield f"data: {json.dumps(chunk_data)}\n\n"
-                     # except: # If parsing fails or format is unexpected, yield original
-                     #     yield chunk
-                     yield chunk # Forward the SSE formatted chunk
-            except ValueError as e: # Catch API key error from GrokService init
+                     yield chunk
+            except ValueError as e:
                  error_payload = {"error": {"message": f"Grok API Key Error: {e}", "type": "authentication_error", "code": 401}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
-            except HTTPException as e: # Catch specific errors from service (like 501 Not Implemented)
+            except HTTPException as e:
                  error_payload = {"error": {"message": f"Grok Error: {e.detail}", "type": "api_error", "code": e.status_code}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
             except Exception as e:
@@ -453,44 +487,30 @@ class ModelRouter:
             auth_key = provider_api_keys.get("gigachat")
             try:
                 service = GigaChatService(auth_key=auth_key)
-                # Call GigaChat's streaming method with BASE model name
                 async for chunk in service.stream_chat_completion(
                     model=base_model_name,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens
                 ):
-                    # TODO: Verify GigaChat streaming output and adjust chunk modification if necessary.
-                    # Assuming GigaChatService yields SSE formatted strings compatible with OpenAI
-                    # or needs modification here.
-                    # Example modification (if chunk is dict and needs model name override):
-                    # try:
-                    #     chunk_data = json.loads(chunk.split("data: ", 1)[1])
-                    #     chunk_data['model'] = original_model_name
-                    #     yield f"data: {json.dumps(chunk_data)}\n\n"
-                    # except:
-                    #     yield chunk # Yield original if parsing fails
-                    yield chunk # Forward the SSE formatted chunk
-            except ValueError as e: # Catch auth key error
+                    yield chunk
+            except ValueError as e:
                  error_payload = {"error": {"message": f"GigaChat Auth Key Error: {e}", "type": "authentication_error", "code": 401}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
-            except NotImplementedError as e: # Catch if streaming is not implemented
+            except NotImplementedError as e:
                  error_payload = {"error": {"message": f"GigaChat Error: {e}", "type": "invalid_request_error", "code": 501}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
-            except HTTPException as e: # Catch specific errors from service
+            except HTTPException as e:
                  error_payload = {"error": {"message": f"GigaChat Error: {e.detail}", "type": "api_error", "code": e.status_code}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
             except Exception as e:
-                 logging.exception(f"Error streaming from GigaChat for model {original_model_name}: {e}")
-                 error_payload = {"error": {"message": f"Error streaming from GigaChat: {e}", "type": "internal_server_error", "code": 500}}
-                 yield f"data: {json.dumps(error_payload)}\n\n"
+                logging.exception(f"Error streaming from GigaChat for model {original_model_name}: {e}")
+                error_payload = {"error": {"message": f"Error streaming from GigaChat: {e}", "type": "internal_server_error", "code": 500}}
+                yield f"data: {json.dumps(error_payload)}\n\n"
 
-        # Safeguard: This should not be reached if _determine_provider works correctly
         else:
              logging.error(f"Internal streaming routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
              error_payload = {"error": {"message": "Internal server error during streaming model routing.", "type": "internal_server_error", "code": 500}}
              yield f"data: {json.dumps(error_payload)}\n\n"
 
-
-        # Send the final [DONE] signal regardless of which model was used (or if error occurred before loop)
         yield "data: [DONE]\n\n"

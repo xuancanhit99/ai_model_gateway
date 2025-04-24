@@ -32,7 +32,7 @@ async def create_chat_completion(
     request: Request,
     user_info: Dict[str, Any] = Depends(verify_api_key),
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
-    x_grok_api_key: Optional[str] = Header(None, alias="X-Grok-API-Key"), # Add Grok key header
+    x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"), # Changed alias and variable name
 ):
     """
     Tạo chat completion tương thích với OpenAI, hỗ trợ Gemini và Grok.
@@ -51,8 +51,8 @@ async def create_chat_completion(
         provider_api_keys = {}
         if x_google_api_key:
             provider_api_keys["google"] = x_google_api_key
-        if x_grok_api_key: # Add Grok key if provided
-            provider_api_keys["grok"] = x_grok_api_key
+        if x_xai_api_key: # Changed variable name
+            provider_api_keys["grok"] = x_xai_api_key # Changed variable name
 
         # Định tuyến tới mô hình phù hợp
         if stream:

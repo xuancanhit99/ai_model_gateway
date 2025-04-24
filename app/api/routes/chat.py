@@ -23,7 +23,7 @@ settings = get_settings()
 async def generate_chat_response(
     request_body: ChatRequest,
     x_google_api_key: str | None = Header(None, alias="X-Google-API-Key"), # Get keys directly
-    x_grok_api_key: str | None = Header(None, alias="X-Grok-API-Key")      # Get keys directly
+    x_xai_api_key: str | None = Header(None, alias="X-xAI-API-Key")      # Changed alias and variable name
 ):
     """
     Receives a user message and optional chat history, then returns
@@ -34,7 +34,7 @@ async def generate_chat_response(
         # Use keys from headers first, then fall back to settings if available
         provider_api_keys: Dict[str, str] = {}
         google_key = x_google_api_key or settings.GOOGLE_AI_STUDIO_API_KEY # Use correct setting name
-        grok_key = x_grok_api_key or settings.XAI_API_KEY # Use correct setting name
+        grok_key = x_xai_api_key or settings.XAI_API_KEY # Changed variable name
 
         if google_key:
             provider_api_keys["google"] = google_key

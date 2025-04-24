@@ -1,7 +1,7 @@
 # app/services/gemini.py
 import google.generativeai as genai
 from google.generativeai.types import generation_types # Import specific types for error handling
-from typing import AsyncGenerator # Add this import
+from typing import AsyncGenerator, Tuple # Add Tuple
 from app.core.config import get_settings
 from app.models.schemas import ChatMessage # Import ChatMessage schema
 from fastapi import HTTPException, status
@@ -29,7 +29,7 @@ class GeminiService:
             # More specific error for model initialization
             raise ValueError(f"Failed to initialize Gemini model '{self.model_id}': {e}")
 
-    async def extract_text(self, image_data: bytes, content_type: str, prompt: str | None = None) -> str:
+    async def extract_text(self, image_data: bytes, content_type: str, prompt: str | None = None) -> Tuple[str, str]: # Update return type hint
         """Extracts text from an image using the configured Gemini vision model."""
         # Check the initialized genai_model
         if not self.genai_model:
@@ -55,8 +55,9 @@ class GeminiService:
                  if response.prompt_feedback.block_reason:
                      raise generation_types.BlockedPromptException(f"Prompt blocked due to {response.prompt_feedback.block_reason.name}")
                  else:
-                     return "" # Or raise an error if empty response is unexpected
-            return response.text
+                     return "", self.model_id # Return empty string and model ID
+            # Return extracted text and the model ID used
+            return response.text, self.model_id
         except generation_types.BlockedPromptException as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
