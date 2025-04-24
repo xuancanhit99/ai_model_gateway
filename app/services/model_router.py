@@ -219,11 +219,16 @@ class ModelRouter:
 
         elif provider == "gigachat":
             auth_key = provider_api_keys.get("gigachat")
+            # Check if auth_key is actually available before proceeding
+            if not auth_key:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="GigaChat Authorization Key was not provided or found.")
             try:
-                service = GigaChatService(auth_key=auth_key)
+                # Initialize service without the key, key is passed to methods
+                service = GigaChatService()
                 response_payload = await service.create_chat_completion(
                     model=base_model_name,
                     messages=messages,
+                    auth_key=auth_key,  # Pass auth_key here
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=False
@@ -371,12 +376,17 @@ class ModelRouter:
 
         elif provider == "gigachat":
             auth_key = provider_api_keys.get("gigachat")
+            # Check if auth_key is actually available before proceeding
+            if not auth_key:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="GigaChat Authorization Key was not provided or found.")
             try:
-                service = GigaChatService(auth_key=auth_key)
+                # Initialize service without the key
+                service = GigaChatService()
                 openai_messages = ModelRouter._convert_simple_to_openai(message, history)
                 response_payload = await service.create_chat_completion(
                     model=base_model_name,
                     messages=openai_messages,
+                    auth_key=auth_key,  # Pass auth_key here
                     stream=False
                 )
                 response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -485,11 +495,19 @@ class ModelRouter:
 
         elif provider == "gigachat":
             auth_key = provider_api_keys.get("gigachat")
+            # Check if auth_key is actually available before proceeding
+            if not auth_key:
+                error_payload = {"error": {"message": "GigaChat Authorization Key was not provided or found.", "type": "authentication_error", "code": 401}}
+                yield f"data: {json.dumps(error_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
             try:
-                service = GigaChatService(auth_key=auth_key)
+                # Initialize service without the key
+                service = GigaChatService()
                 async for chunk in service.stream_chat_completion(
                     model=base_model_name,
                     messages=messages,
+                    auth_key=auth_key,  # Pass auth_key here
                     temperature=temperature,
                     max_tokens=max_tokens
                 ):

@@ -1,298 +1,325 @@
 import httpx
+import json
 import uuid
 import time
 import logging
-import json
-import asyncio
-from cachetools import TTLCache
+from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 from fastapi import HTTPException, status
+from app.core.config import get_settings
 
-# Correct imports for settings and logger within the main gateway structure
-from app.core.config import get_settings # Import the function to get settings
-# Assuming logger is configured in config.py or main app setup
-# If not, configure standard logging here:
-# logging.basicConfig(level=logging.INFO)
-# logger = logging.getLogger(__name__)
-# For now, let's assume a logger instance is available via app setup or config
-logger = logging.getLogger(__name__) # Use standard logging for now
-
-# Get settings instance
 settings = get_settings()
-
-from app.models.schemas import (
-    GigaChatCompletionRequest, GigaChatCompletionResponse,
-    TokenResponse, GigaChatMessageInput
-)
-
-# Cache for the access token (TTL slightly less than 30 mins, e.g., 29 mins = 1740 secs)
-token_cache = TTLCache(maxsize=1, ttl=1740)
-CACHE_KEY = "gigachat_access_token"
-_token_lock = asyncio.Lock() # Lock for fetching token
-
-async def _fetch_new_access_token() -> str:
-    """Fetches a new access token from the GigaChat OAuth endpoint."""
-    if not settings.GIGACHAT_AUTH_KEY:
-        logger.error("GIGACHAT_AUTH_KEY is not configured.")
-        raise ValueError("GigaChat Authorization Key (GIGACHAT_AUTH_KEY) is missing in settings.")
-
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json',
-        'RqUID': str(uuid.uuid4()),
-        'Authorization': f'Basic {settings.GIGACHAT_AUTH_KEY}'
-    }
-    data = {'scope': settings.GIGACHAT_SCOPE}
-    request_url = settings.GIGACHAT_TOKEN_URL
-
-    logger.info(f"Requesting new GigaChat access token from {request_url} with scope {settings.GIGACHAT_SCOPE}")
-
-    async with httpx.AsyncClient(verify=False) as client:
-        try:
-            response = await client.post(request_url, headers=headers, data=data)
-            response.raise_for_status()
-
-            token_data = response.json()
-            if "access_token" not in token_data or "expires_at" not in token_data:
-                logger.error(f"Invalid token response structure received: {token_data}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid token response from GigaChat auth service.")
-
-            token_response = TokenResponse(**token_data)
-            logger.info(f"Successfully obtained new GigaChat access token, expires at {token_response.expires_at}")
-            return token_response.access_token
-
-        except httpx.RequestError as exc:
-            logger.error(f"HTTP request error while fetching GigaChat token: {exc}")
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                                detail=f"Error connecting to GigaChat auth service: {exc}")
-        except httpx.HTTPStatusError as exc:
-            logger.error(f"HTTP status error while fetching GigaChat token: {exc.response.status_code} - {exc.response.text}")
-            raise HTTPException(status_code=exc.response.status_code,
-                                detail=f"GigaChat auth service returned error: {exc.response.text}")
-        except Exception as exc:
-            logger.exception(f"Unexpected error fetching GigaChat token: {exc}")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail=f"An unexpected error occurred while fetching the GigaChat token: {exc}")
-
-async def get_access_token() -> str:
-    """Gets the access token, utilizing the cache manually and handling async."""
-    logger.info("Attempting to get GigaChat access token (checking cache first)...")
-    
-    try:
-        cached_token = token_cache[CACHE_KEY]
-        logger.info("Found valid token in cache.")
-        return cached_token
-    except KeyError:
-        logger.info("Token not found in cache or expired, attempting to fetch new token.")
-
-    async with _token_lock:
-        try:
-            cached_token = token_cache[CACHE_KEY]
-            logger.info("Found valid token in cache after acquiring lock.")
-            return cached_token
-        except KeyError:
-            logger.info("Fetching new token under lock.")
-            try:
-                token = await _fetch_new_access_token()
-                if not token:
-                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                        detail="_fetch_new_access_token returned empty token.")
-                token_cache[CACHE_KEY] = token
-                logger.info("Successfully fetched and cached new token.")
-                return token
-            except ValueError as e:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
-            except Exception as e:
-                logger.exception("Unexpected error during token fetch within lock.")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error fetching token: {e}")
+logging.basicConfig(level=logging.INFO)
 
 class GigaChatService:
-    """Service class to interact with GigaChat API."""
-    def __init__(self, auth_key: str = None):
-        if auth_key and not settings.GIGACHAT_AUTH_KEY:
-            logger.warning("Auth key provided to GigaChatService init, but token fetching uses GIGACHAT_AUTH_KEY from settings.")
-        elif not settings.GIGACHAT_AUTH_KEY:
-            logger.warning("GigaChatService initialized without an auth key provided or found in settings.")
+    """Service for interacting with the GigaChat API."""
+
+    def __init__(self, auth_key: Optional[str] = None):
+        """Initializes the GigaChat service.
+
+        Args:
+            auth_key: Optional GigaChat authorization key. This is NO LONGER used
+                      as a default. Keys MUST be provided per-request.
+        """
+        self.scope = settings.GIGACHAT_SCOPE  # Use scope from settings
+        self._access_token = None
+        self._token_expires_at = 0
+
+    async def _get_access_token(self, auth_key: str) -> str:
+        """Retrieves or renews the access token using the provided auth_key."""
+        # Check if the provided auth_key is valid
+        if not auth_key or len(auth_key) < 10:  # Basic check, adjust if needed
+            raise ValueError("Invalid GigaChat Authorization Key provided.")
+
+        current_time = time.time()
+        logging.info("Requesting new GigaChat access token.")
+        token_url = settings.GIGACHAT_TOKEN_URL  # Use the full token URL from settings
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'RqUID': str(uuid.uuid4()),
+            'Authorization': f'Bearer {auth_key}'
+        }
+        payload = {'scope': self.scope}
+
+        try:
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.post(token_url, headers=headers, data=payload, timeout=30.0)
+                response.raise_for_status()
+                token_data = response.json()
+                self._access_token = token_data['access_token']
+                # expires_at is in milliseconds, convert to seconds
+                self._token_expires_at = current_time + (token_data['expires_at'] / 1000)
+                logging.info("Successfully obtained new GigaChat access token.")
+                return self._access_token
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            error_detail = f"GigaChat token request failed (Status: {status_code})"
+            try:
+                error_data = e.response.json()
+                api_err_msg = error_data.get("message") or error_data.get("error_description")
+                if api_err_msg:
+                    error_detail = f"GigaChat Token Error: {api_err_msg}"
+            except Exception:
+                pass
+            logging.error(f"GigaChat Token Error: {error_detail} (Status: {status_code})")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=error_detail) from e
+        except (httpx.RequestError, httpx.TimeoutException) as e:
+            logging.error(f"Could not connect to GigaChat for token: {e}")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Could not connect to GigaChat authentication service.") from e
+        except (KeyError, TypeError) as e:
+            logging.error(f"Failed to parse GigaChat token response: {e}")
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Invalid response from GigaChat authentication service.") from e
+
+    async def _make_request(
+        self,
+        auth_key: str,
+        payload: Dict[str, Any],
+        stream: bool = False
+    ) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
+        """Helper function to make requests to the GigaChat API."""
+        if not auth_key:
+             # Updated error message for clarity
+             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="GigaChat Authorization Key was not provided or found.")
+
+        try:
+            access_token = await self._get_access_token(auth_key)
+        except ValueError as e:
+             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        except HTTPException as e:
+            raise e
+
+        chat_url = settings.GIGACHAT_CHAT_URL  # Use the full chat URL from settings
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json' if not stream else 'text/event-stream',
+            'Authorization': f'Bearer {access_token}'
+        }
+
+        try:
+            async with httpx.AsyncClient(verify=False) as client:
+                if stream:
+                    logging.debug(f"GigaChat Request Payload (stream): {payload}")
+                    async def stream_generator():
+                        async with client.stream("POST", chat_url, json=payload, headers=headers, timeout=90.0) as response:
+                            if response.status_code >= 400:
+                                error_body = await response.aread()
+                                error_detail = f"GigaChat API stream request failed (Status: {response.status_code})"
+                                try:
+                                    error_data = json.loads(error_body.decode())
+                                    api_err_msg = error_data.get("message")
+                                    if api_err_msg:
+                                        error_detail = f"GigaChat API Error: {api_err_msg}"
+                                except Exception:
+                                    error_detail += f" - Body: {error_body.decode()[:200]}"
+                                logging.error(f"GigaChat Stream Error: {error_detail}")
+                                error_payload = {"error": {"message": error_detail, "type": "api_error", "code": response.status_code}}
+                                yield f"data: {json.dumps(error_payload)}\n\n"
+                                return
+
+                            async for line in response.aiter_lines():
+                                if line:
+                                    yield line + "\n\n"
+                    return stream_generator()
+                else:
+                    logging.debug(f"GigaChat Request Payload (non-stream): {payload}")
+                    response = await client.post(chat_url, json=payload, headers=headers, timeout=90.0)
+                    response.raise_for_status()
+                    response_data = response.json()
+                    logging.debug(f"GigaChat Response Data (non-stream): {response_data}")
+                    return response_data
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            error_detail = f"GigaChat API request failed (Status: {status_code})"
+            try:
+                error_data = e.response.json()
+                api_err_msg = error_data.get("message")
+                if api_err_msg:
+                    error_detail = f"GigaChat API Error: {api_err_msg}"
+                    if status_code == 401:
+                        error_detail = "GigaChat request failed: Authentication error (check token/key)."
+                    elif status_code == 429:
+                        status_code = status.HTTP_429_TOO_MANY_REQUESTS
+                        error_detail = "GigaChat service rate limited. Please try again later."
+                    elif status_code == 400:
+                        status_code = status.HTTP_400_BAD_REQUEST
+                        error_detail = f"GigaChat API rejected input: {api_err_msg}"
+                    else:
+                        status_code = status.HTTP_502_BAD_GATEWAY
+            except Exception:
+                 if status_code == 401: status_code = status.HTTP_401_UNAUTHORIZED; error_detail = "GigaChat request failed: Authentication error."
+                 elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS; error_detail = "GigaChat service rate limited."
+                 elif status_code == 400: status_code = status.HTTP_400_BAD_REQUEST; error_detail = "GigaChat API rejected input."
+                 else: status_code = status.HTTP_502_BAD_GATEWAY; error_detail = "Bad Gateway connecting to GigaChat API."
+
+            logging.error(f"GigaChat API Error: {error_detail} (Status: {status_code})")
+            raise HTTPException(status_code=status_code, detail=error_detail) from e
+        except httpx.TimeoutException as e:
+             logging.error("Request to GigaChat API timed out.")
+             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Request to GigaChat API timed out.") from e
+        except httpx.RequestError as e:
+             logging.error(f"Could not connect to GigaChat API: {e}")
+             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Could not connect to the backend GigaChat service.") from e
+        except (KeyError, IndexError, TypeError) as parse_error:
+             logging.error(f"Failed to parse GigaChat API response: {parse_error}")
+             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to parse expected data from GigaChat API response.") from parse_error
+        except Exception as e:
+             logging.exception("An unexpected error occurred in GigaChat service request.")
+             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected internal error occurred.") from e
 
     async def create_chat_completion(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: List[Dict[str, Any]],
+        auth_key: str,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_tokens: Optional[int] = None,
         stream: bool = False
-    ) -> dict:
-        if stream:
-            raise NotImplementedError("Use stream_chat_completion for streaming requests.")
+    ) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
+        """
+        Generates a chat completion using the GigaChat API, mimicking OpenAI structure.
+        Requires auth_key for the request.
+        """
+        processed_messages = messages
 
-        access_token = await get_access_token()
-
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Authorization': f'Bearer {access_token}'
+        payload = {
+            "model": model,
+            "messages": processed_messages,
+            "temperature": temperature,
+            "stream": stream
         }
 
-        giga_messages = [GigaChatMessageInput(**msg) for msg in messages]
+        giga_response = await self._make_request(auth_key=auth_key, payload=payload, stream=stream)
 
-        payload = GigaChatCompletionRequest(
-            model=model,
-            messages=giga_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        ).model_dump(exclude_none=True)
-
-        request_url = settings.GIGACHAT_CHAT_URL
-        logger.info(f"Sending chat completion request to GigaChat ({model}) at {request_url}")
-
-        async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+        if stream:
+            return self._format_stream_to_openai(giga_response, model)
+        else:
             try:
-                response = await client.post(request_url, headers=headers, json=payload)
-                response.raise_for_status()
-                response_data = response.json()
-                logger.info("Successfully received chat completion response from GigaChat.")
+                finish_reason = giga_response.get("choices", [{}])[0].get("finish_reason", "stop")
+                response_message = giga_response.get("choices", [{}])[0].get("message", {"role": "assistant", "content": ""})
+                prompt_tokens = giga_response.get("usage", {}).get("prompt_tokens")
+                completion_tokens = giga_response.get("usage", {}).get("completion_tokens")
+                total_tokens = giga_response.get("usage", {}).get("total_tokens")
 
-                giga_response = GigaChatCompletionResponse(**response_data)
-
-                response_content = ""
-                if giga_response.choices and giga_response.choices[0].message:
-                    response_content = giga_response.choices[0].message.content
-
-                finish_reason = "stop"
-                if giga_response.choices and giga_response.choices[0].finish_reason:
-                    finish_reason = giga_response.choices[0].finish_reason
-
-                prompt_tokens = giga_response.usage.prompt_tokens if giga_response.usage else 0
-                completion_tokens = giga_response.usage.completion_tokens if giga_response.usage else 0
-                total_tokens = giga_response.usage.total_tokens if giga_response.usage else prompt_tokens + completion_tokens
-
-                openai_payload = {
-                    "id": f"chatcmpl-gigachat-{uuid.uuid4().hex}",
+                openai_formatted_response = {
+                    "id": giga_response.get("id", f"gigachat-cmpl-{uuid.uuid4().hex}"),
                     "object": "chat.completion",
-                    "created": int(time.time()),
+                    "created": giga_response.get("created", int(time.time())),
                     "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": response_content},
-                        "finish_reason": finish_reason
-                    }],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": response_message,
+                            "finish_reason": finish_reason,
+                        }
+                    ],
                     "usage": {
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
-                        "total_tokens": total_tokens
+                        "total_tokens": total_tokens,
                     },
                 }
-                return openai_payload
+                if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+                    if "usage" in openai_formatted_response:
+                         del openai_formatted_response["usage"]
 
-            except httpx.RequestError as exc:
-                logger.error(f"HTTP request error during GigaChat chat completion: {exc}")
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                                    detail=f"Error connecting to GigaChat chat service: {exc}")
-            except httpx.HTTPStatusError as exc:
-                logger.error(f"HTTP status error during GigaChat chat completion: {exc.response.status_code} - {exc.response.text}")
-                error_detail = f"GigaChat chat service returned error: Status {exc.response.status_code}"
-                try:
-                    error_json = exc.response.json()
-                    error_detail += f" - {error_json}"
-                except Exception:
-                    error_detail += f" - {exc.response.text}"
-                raise HTTPException(status_code=exc.response.status_code, detail=error_detail)
-            except Exception as exc:
-                logger.exception(f"Unexpected error during GigaChat chat completion: {exc}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                    detail=f"An unexpected error occurred during GigaChat chat completion: {exc}")
+                return openai_formatted_response
 
-    async def stream_chat_completion(self, model: str, messages: list[dict[str, str]], temperature: float = 0.7, max_tokens: int | None = None):
-        access_token = await get_access_token()
+            except (KeyError, IndexError, TypeError) as e:
+                logging.error(f"Failed to transform GigaChat response to OpenAI format: {e}. Response: {giga_response}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to parse or transform response from GigaChat API."
+                ) from e
 
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
-            'Authorization': f'Bearer {access_token}'
-        }
+    async def _format_stream_to_openai(self, giga_stream: AsyncGenerator[str, None], model_id: str) -> AsyncGenerator[str, None]:
+        """Formats GigaChat SSE stream to OpenAI SSE format."""
+        request_id = f"chatcmpl-giga-{uuid.uuid4().hex}"
+        created_time = int(time.time())
+        first_chunk = True
 
-        giga_messages = [GigaChatMessageInput(**msg) for msg in messages]
-        payload = GigaChatCompletionRequest(
+        try:
+            async for line in giga_stream:
+                if line.strip() == "data: [DONE]":
+                    yield line
+                    break
+                elif line.startswith("data:"):
+                    try:
+                        chunk_data_str = line.strip()[len("data: "):]
+                        chunk_data = json.loads(chunk_data_str)
+
+                        if "error" in chunk_data:
+                             logging.error(f"GigaChat stream returned an error: {chunk_data['error']}")
+                             error_payload = {"error": chunk_data["error"]}
+                             yield f"data: {json.dumps(error_payload)}\n\n"
+                             continue
+
+                        openai_chunk = {
+                            "id": request_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model_id,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": None
+                            }]
+                        }
+
+                        giga_delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                        giga_content = giga_delta.get("content")
+                        giga_role = giga_delta.get("role")
+                        finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
+
+                        if first_chunk and not giga_role:
+                            openai_chunk["choices"][0]["delta"]["role"] = "assistant"
+                            first_chunk = False
+                        elif giga_role:
+                            openai_chunk["choices"][0]["delta"]["role"] = giga_role
+                            first_chunk = False
+
+                        if giga_content is not None:
+                            openai_chunk["choices"][0]["delta"]["content"] = giga_content
+                            first_chunk = False
+
+                        if finish_reason:
+                            openai_chunk["choices"][0]["finish_reason"] = finish_reason
+
+                        if openai_chunk["choices"][0]["delta"] or openai_chunk["choices"][0]["finish_reason"]:
+                            yield f"data: {json.dumps(openai_chunk, ensure_ascii=False)}\n\n"
+
+                    except json.JSONDecodeError:
+                        logging.warning(f"Received non-JSON data line from GigaChat stream: {line.strip()}")
+                    except Exception as e:
+                        logging.error(f"Error processing GigaChat stream chunk: {e} - Line: {line.strip()}")
+                elif line.strip():
+                    logging.warning(f"Received unexpected line from GigaChat stream: {line.strip()}")
+
+        except HTTPException as e:
+            error_payload = {"error": {"message": f"GigaChat Stream Setup Error: {e.detail}", "type": "api_error", "code": e.status_code}}
+            yield f"data: {json.dumps(error_payload)}\n\n"
+        except Exception as e:
+            logging.exception(f"Unexpected error setting up GigaChat stream formatting for model {model_id}")
+            error_payload = {"error": {"message": f"Unexpected error setting up GigaChat stream: {e}", "type": "internal_server_error", "code": 500}}
+            yield f"data: {json.dumps(error_payload)}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    async def stream_chat_completion(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        auth_key: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Generates and streams chat completions from GigaChat using SSE, formatted for OpenAI."""
+        return await self.create_chat_completion(
             model=model,
-            messages=giga_messages,
+            messages=messages,
+            auth_key=auth_key,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True
-        ).model_dump(exclude_none=True)
-
-        request_url = settings.GIGACHAT_CHAT_URL
-        request_id = f"chatcmpl-gigachat-stream-{uuid.uuid4().hex}"
-        created_time = int(time.time())
-
-        logger.info(f"Sending stream chat completion request to GigaChat ({model}) at {request_url}")
-
-        try:
-            async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
-                async with client.stream("POST", request_url, headers=headers, json=payload) as response:
-                    if response.status_code != 200:
-                        error_body = await response.aread()
-                        logger.error(f"GigaChat stream request failed: Status {response.status_code} - Body: {error_body.decode()}")
-                        error_detail = f"GigaChat stream service returned error: Status {response.status_code}"
-                        try:
-                            error_json = json.loads(error_body.decode())
-                            error_detail += f" - {error_json}"
-                        except Exception:
-                            error_detail += f" - {error_body.decode()}"
-                        error_payload = {"error": {"message": error_detail, "type": "api_error", "code": response.status_code}}
-                        yield f"data: {json.dumps(error_payload)}\n\n"
-                        return
-                    
-                    first_chunk = True
-                    async for line in response.aiter_lines():
-                        if line.startswith("data:"):
-                            data_str = line[len("data:"):].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                giga_chunk = json.loads(data_str)
-                                openai_chunk_payload = {
-                                    "id": request_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created_time,
-                                    "model": model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {},
-                                        "finish_reason": None
-                                    }]
-                                }
-
-                                if first_chunk:
-                                    openai_chunk_payload["choices"][0]["delta"]["role"] = "assistant"
-                                    first_chunk = False
-
-                                content_delta = ""
-                                if giga_chunk.get("choices") and giga_chunk["choices"][0].get("delta"):
-                                    content_delta = giga_chunk["choices"][0]["delta"].get("content", "")
-                                
-                                if content_delta:
-                                    openai_chunk_payload["choices"][0]["delta"]["content"] = content_delta
-                                
-                                finish_reason = None
-                                if giga_chunk.get("choices") and giga_chunk["choices"][0].get("finish_reason"):
-                                    finish_reason = giga_chunk["choices"][0]["finish_reason"]
-                                    openai_chunk_payload["choices"][0]["finish_reason"] = finish_reason
-
-                                if content_delta or finish_reason:
-                                    yield f"data: {json.dumps(openai_chunk_payload, ensure_ascii=False)}\n\n"
-
-                            except json.JSONDecodeError:
-                                logger.warning(f"Failed to decode JSON from GigaChat stream line: {data_str}")
-                            except Exception as e:
-                                logger.exception(f"Error processing GigaChat stream chunk: {e}")
-                                error_payload = {"error": {"message": f"Error processing stream chunk: {e}", "type": "internal_server_error", "code": 500}}
-                                yield f"data: {json.dumps(error_payload)}\n\n"
-
-        except httpx.RequestError as exc:
-            logger.error(f"HTTP request error during GigaChat stream: {exc}")
-            error_payload = {"error": {"message": f"Error connecting to GigaChat stream service: {exc}", "type": "connection_error", "code": 503}}
-            yield f"data: {json.dumps(error_payload)}\n\n"
-        except Exception as exc:
-            logger.exception(f"Unexpected error during GigaChat stream setup or processing: {exc}")
-            error_payload = {"error": {"message": f"An unexpected error occurred during GigaChat stream: {exc}", "type": "internal_server_error", "code": 500}}
-            yield f"data: {json.dumps(error_payload)}\n\n"
+        )
 

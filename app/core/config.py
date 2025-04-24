@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     GIGACHAT_AUTH_KEY: Optional[str] = None # Authorization key for GigaChat (e.g., from .env or header)
     GIGACHAT_SCOPE: str = "GIGACHAT_API_PERS"
     GIGACHAT_TOKEN_URL: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-    GIGACHAT_CHAT_URL: str = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions" # Removed trailing '='
+    GIGACHAT_CHAT_URL: str = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
     GIGACHAT_DEFAULT_MODEL: str = "GigaChat-Pro" # Default model if needed
 
     # --- File Handling ---
