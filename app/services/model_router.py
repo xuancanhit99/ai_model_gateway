@@ -6,7 +6,7 @@ from fastapi import HTTPException, status, UploadFile
 import mimetypes
 from app.services.gemini import GeminiService
 from app.services.grok import GrokService
-from app.services.gigachat_service import GigaChatService
+from app.services.gigachat import GigaChatService
 from app.services.sonar import SonarService
 from app.models.schemas import ChatMessage
 import time
