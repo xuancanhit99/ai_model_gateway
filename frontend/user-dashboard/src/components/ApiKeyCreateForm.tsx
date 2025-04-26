@@ -67,8 +67,15 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
     const copyToClipboard = () => {
         if (newKey) {
             navigator.clipboard.writeText(newKey)
-                .then(() => alert('API Key copied to clipboard!'))
-                .catch(err => console.error('Failed to copy key: ', err));
+                .then(() => {
+                    alert('API Key copied to clipboard!');
+                    setNewKey(null); // <-- Thêm dòng này để ẩn ô hiển thị key
+                })
+                .catch(err => {
+                    console.error('Failed to copy key: ', err);
+                    // Optionally keep the key visible if copy fails
+                    alert('Failed to copy key. Please copy it manually.');
+                });
         }
     };
 
@@ -92,7 +99,7 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
                 </button>
             </form>
 
-            {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+            {error && <p style={{ color: 'var(--color-error)' }}>Error: {error}</p>} {/* Use CSS var */}
 
             {newKey && (
                 <div className="success-message"> {/* Use CSS class */}
