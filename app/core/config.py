@@ -49,6 +49,11 @@ class Settings(BaseSettings):
         "image/jpeg", "image/png" # As specified for Grok
     ])
 
+    # --- Supabase Settings ---
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None # Key for backend operations
+    SUPABASE_JWT_SECRET: Optional[str] = None # Key for verifying user JWTs
+
     # --- Pydantic Settings Config ---
     model_config = {
         "env_file": ".env",

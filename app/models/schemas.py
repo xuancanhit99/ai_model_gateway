@@ -1,3 +1,4 @@
+from datetime import datetime, timezone # Import datetime and timezone
 # app/models/schemas.py
 from pydantic import BaseModel, Field, HttpUrl
 from typing import List, Optional, Dict, Any, Literal # Import Literal
@@ -111,3 +112,41 @@ class GigaChatCompletionResponse(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     expires_at: int # Assuming it's a timestamp
+
+# --- API Key Management Schemas ---
+
+class ApiKeyCreateRequest(BaseModel):
+    """Request body for creating a new API key."""
+    name: Optional[str] = Field(None, description="Optional descriptive name for the API key.")
+
+class ApiKeyCreateResponse(BaseModel):
+    """
+    Response after successfully creating an API key.
+    IMPORTANT: The full_api_key is only returned ONCE upon creation.
+    """
+    name: Optional[str] = None
+    key_prefix: str = Field(..., description="The first few characters of the API key for identification.")
+    full_api_key: str = Field(..., description="The complete API key. Store this securely, it won't be shown again.")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    user_id: str # UUID of the owner
+
+class ApiKeyInfo(BaseModel):
+    """Metadata of an API key (excluding the secret/hash) for listing."""
+    key_prefix: str
+    name: Optional[str] = None
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+    is_active: bool
+    user_id: str
+
+    class Config:
+        orm_mode = True # Enable ORM mode for potential database model mapping
+
+class ApiKeyListResponse(BaseModel):
+    """Response containing a list of API key metadata."""
+    keys: List[ApiKeyInfo]
+
+class StatusResponse(BaseModel):
+    """Generic status response."""
+    status: str
+    message: Optional[str] = None

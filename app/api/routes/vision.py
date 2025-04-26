@@ -1,8 +1,9 @@
 # app/api/routes/vision.py
-from fastapi import APIRouter, File, UploadFile, HTTPException, status, Header, Form
-from typing import Optional, Dict
+from fastapi import APIRouter, File, UploadFile, HTTPException, status, Header, Form, Depends # Added Depends
+from typing import Optional, Dict, Any # Added Any
 from app.models.schemas import VisionResponse, ErrorResponse
 from app.services.model_router import ModelRouter
+from app.core.auth import verify_api_key # Import the new auth dependency
 from app.core.config import get_settings
 
 router = APIRouter()
@@ -27,8 +28,9 @@ async def extract_text_from_image(
         prompt: Optional[str] = Form(None, description="Optional: Custom prompt for extraction"),
         model: Optional[str] = Form(settings.GEMINI_VISION_MODEL_NAME, description="Model ID (e.g., 'google/gemini-pro-vision', 'x-ai/grok-vision')"),
         x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
-        x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key")
-):
+        x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
+        _: Dict[str, Any] = Depends(verify_api_key) # Mark auth_info as unused
+    ):
     """
     Receives an image file and routes the text extraction request
     to the appropriate vision model (Gemini or Grok) via ModelRouter.

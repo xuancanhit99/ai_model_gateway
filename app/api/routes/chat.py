@@ -1,9 +1,10 @@
 # app/api/routes/chat.py
-from fastapi import APIRouter, HTTPException, status, Header # Removed Depends, Query, Annotated
+from fastapi import APIRouter, HTTPException, status, Header, Depends # Added Depends
 from app.models.schemas import ChatRequest, ChatResponse, ErrorResponse
 from app.services.model_router import ModelRouter # Import ModelRouter
 from app.core.config import get_settings
-from typing import Dict # Import Dict
+from app.core.auth import verify_api_key # Import the new auth dependency
+from typing import Dict, Any # Import Any
 
 router = APIRouter()
 settings = get_settings()
@@ -25,7 +26,8 @@ async def generate_chat_response(
     x_google_api_key: str | None = Header(None, alias="X-Google-API-Key"),
     x_xai_api_key: str | None = Header(None, alias="X-xAI-API-Key"),
     x_gigachat_api_key: str | None = Header(None, alias="X-GigaChat-API-Key"), # Add GigaChat key header
-    x_perplexity_api_key: str | None = Header(None, alias="X-Perplexity-API-Key") # Add Perplexity key header
+    x_perplexity_api_key: str | None = Header(None, alias="X-Perplexity-API-Key"), # Add Perplexity key header
+    _: Dict[str, Any] = Depends(verify_api_key) # Mark auth_info as unused
 ):
     """
     Receives a user message and optional chat history, then returns

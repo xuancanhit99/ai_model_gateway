@@ -1,6 +1,6 @@
 # app/main.py
 from fastapi import FastAPI
-from app.api.routes import vision, health, chat, openai_compat
+from app.api.routes import vision, health, chat, openai_compat, manage_keys # Import manage_keys
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -22,6 +22,9 @@ app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["Cha
 
 # OpenAI compatible routes - Chỉ sử dụng prefix /v1
 app.include_router(openai_compat.router, prefix="/v1", tags=["OpenAI Standard"])
+
+# API Key Management routes
+app.include_router(manage_keys.router, tags=["API Key Management"]) # Prefix is defined in the router itself
 
 @app.get("/")
 async def root():

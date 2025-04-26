@@ -33,6 +33,24 @@ services:
     networks:
       - ai_gateway_network
 
+  frontend_dashboard:
+    build:
+      context: ./frontend/user-dashboard
+      dockerfile: Dockerfile
+      args:
+        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+    container_name: ai_gateway_frontend
+    ports:
+      - "6060:80"
+    env_file:
+      - .env
+    depends_on:
+      - ai_gateway_service
+    restart: unless-stopped
+    networks:
+      - ai_gateway_network
+
 networks:
   ai_gateway_network:
     driver: bridge
