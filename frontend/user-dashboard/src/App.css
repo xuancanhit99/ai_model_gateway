@@ -40,3 +40,65 @@
 .read-the-docs {
   color: #888;
 }
+
+/* Theme Switch Styles */
+.theme-switch {
+  display: inline-block;
+  position: relative;
+  width: 50px; /* Adjust width as needed */
+  height: 26px; /* Adjust height as needed */
+  cursor: pointer;
+  margin-left: 15px; /* Add some space from other elements */
+  vertical-align: middle; /* Align nicely with other buttons */
+}
+
+.switch-track {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-color: var(--color-bg-secondary); /* Use theme variable */
+  border-radius: 13px; /* Half of height */
+  transition: background-color 0.2s ease-in-out;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 3px; /* Adjust vertical position */
+  left: 3px; /* Adjust horizontal position */
+  width: 20px; /* Adjust thumb size */
+  height: 20px; /* Adjust thumb size */
+  background-color: var(--color-text-primary); /* Use theme variable */
+  border-radius: 50%;
+  transition: transform 0.2s ease-in-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.switch-icon {
+  font-size: 12px; /* Adjust icon size */
+  line-height: 1;
+  color: var(--color-bg-primary); /* Icon color contrasts with thumb */
+}
+
+/* Checked state (Dark mode) */
+.theme-switch input:checked + .switch-track {
+  background-color: var(--color-accent); /* Optional: different track color for dark */
+}
+
+.theme-switch input:checked + .switch-track .switch-thumb {
+  transform: translateX(24px); /* Move thumb to the right (width - thumb_width - 2*left_offset) */
+  background-color: var(--color-text-primary); /* Thumb color in dark mode */
+}
+
+.theme-switch input:checked + .switch-track .switch-thumb .switch-icon {
+   color: var(--color-bg-primary); /* Icon color in dark mode */
+}
+
+/* Focus styles for accessibility */
+.theme-switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

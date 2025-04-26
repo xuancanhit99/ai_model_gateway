@@ -1,21 +1,36 @@
-import { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient'; // Import Supabase client
-import { Auth } from '@supabase/auth-ui-react'; // Import Auth UI component
-import { ThemeSupa } from '@supabase/auth-ui-shared'; // Import default theme
-import type { Session } from '@supabase/supabase-js'; // Import Session type
-import './App.css'; // Keep default CSS for now
+import { useState, useEffect, useCallback } from 'react';
+import { supabase } from './supabaseClient';
+import { Auth } from '@supabase/auth-ui-react';
+import { ThemeSupa } from '@supabase/auth-ui-shared';
+import type { Session } from '@supabase/supabase-js';
+import ApiKeyList from './components/ApiKeyList';
+import ApiKeyCreateForm from './components/ApiKeyCreateForm';
+import './App.css'; // Import CSS chính
 
-// Placeholder for the main dashboard component after login
+// Kiểu dữ liệu cho theme
+type Theme = 'light' | 'dark';
+
+// Main dashboard component after login
 function Dashboard({ session }: { session: Session }) {
-  // In a real app, this would fetch and display API keys, allow creation/deletion
-  // It would use session.user.id to make authenticated requests to the backend API
+  const [refreshCounter, setRefreshCounter] = useState(0);
+
+  const handleKeyCreated = useCallback(() => {
+    console.log("New key created, triggering list refresh...");
+    setRefreshCounter(prev => prev + 1);
+  }, []);
+
   return (
-    <div>
+    <div className="dashboard-content"> {/* Add class for potential styling */}
+      {/* Welcome message can stay here or move to app bar if desired */}
       <h2>Dashboard</h2>
       <p>Welcome, {session.user.email}!</p>
-      <p>User ID: {session.user.id}</p>
-      {/* TODO: Add API Key Management UI here */}
-      <button onClick={() => supabase?.auth.signOut()}>Sign Out</button>
+      <hr />
+      <ApiKeyList key={refreshCounter} session={session} onListChange={handleKeyCreated} />
+      <hr />
+      <ApiKeyCreateForm onKeyCreated={handleKeyCreated} />
+      {/* Sign out button moved to App Bar */}
+      {/* <hr style={{ marginTop: '30px' }}/>
+      <button onClick={() => supabase?.auth.signOut()}>Sign Out</button> */}
     </div>
   );
 }
@@ -23,52 +38,106 @@ function Dashboard({ session }: { session: Session }) {
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  // State cho theme, đọc từ localStorage hoặc mặc định là 'dark'
+  const [theme, setTheme] = useState<Theme>(() => {
+    const storedTheme = localStorage.getItem('app-theme');
+    return (storedTheme === 'light' || storedTheme === 'dark') ? storedTheme : 'dark';
+  });
 
+  // Effect để lấy session và lắng nghe thay đổi auth state
   useEffect(() => {
-    // Check for existing session on initial load
+    setLoading(true); // Bắt đầu loading khi effect chạy
     supabase?.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setLoading(false);
+      // setLoading(false); // Chuyển setLoading vào cuối effect để đảm bảo theme được áp dụng
     }).catch(error => {
       console.error("Error getting session:", error);
-      setLoading(false); // Ensure loading stops even on error
+      // setLoading(false);
     });
 
-    // Listen for changes in authentication state (login, logout)
     const { data: { subscription } } = supabase?.auth.onAuthStateChange(
       (_event, session) => {
         setSession(session);
       }
-    ) ?? { data: { subscription: null } }; // Handle potential null supabase client
+    ) ?? { data: { subscription: null } };
 
-    // Cleanup listener on component unmount
     return () => {
       subscription?.unsubscribe();
     };
-  }, []); // Empty dependency array ensures this runs only once on mount
+  }, []);
+
+  // Effect để áp dụng theme vào body và lưu vào localStorage
+  useEffect(() => {
+    document.body.classList.remove('light', 'dark'); // Xóa class cũ
+    document.body.classList.add(theme); // Thêm class mới
+    localStorage.setItem('app-theme', theme); // Lưu lựa chọn
+    setLoading(false); // Kết thúc loading sau khi theme được áp dụng
+  }, [theme]); // Chạy lại khi theme thay đổi
+
+  // Hàm chuyển đổi theme
+  const toggleTheme = () => {
+    setTheme(prevTheme => (prevTheme === 'light' ? 'dark' : 'light'));
+  };
 
   if (loading) {
-    return <div>Loading...</div>; // Show loading indicator
+    return <div>Loading...</div>;
   }
 
-  // Render Auth UI if no session, otherwise render the Dashboard
   return (
-    <div className="container" style={{ padding: '50px 0 100px 0' }}>
-      {!session ? (
-        supabase ? ( // Check if supabase client exists before rendering Auth
-          <Auth
-            supabaseClient={supabase}
-            appearance={{ theme: ThemeSupa }} // Use the default Supabase theme
-            providers={['google', 'github']} // Optional: Add social providers
-            theme="dark" // Optional: Set theme (dark/light)
-          />
+    // Thêm class theme vào container chính để CSS có thể target
+    <div className={`app-container ${theme}`}> {/* Use a more specific class */}
+      {/* App Bar */}
+      <div className="app-bar">
+        <div className="app-bar-title">AI Model Gateway Keys</div>
+        <div className="app-bar-actions">
+          {/* Theme Switch Component */}
+          <label htmlFor="theme-switch-checkbox" className="theme-switch" title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}>
+            <input
+              id="theme-switch-checkbox"
+              type="checkbox"
+              checked={theme === 'dark'}
+              onChange={toggleTheme}
+              style={{ display: 'none' }} // Hide the actual checkbox
+            />
+            <span className="switch-track">
+              <span className="switch-thumb">
+                {/* Icons inside the thumb */}
+                <span className="switch-icon">{theme === 'light' ? '☀️' : '🌙'}</span>
+              </span>
+            </span>
+          </label>
+          {session && (
+            <button onClick={() => supabase?.auth.signOut()} className="signout-btn">
+              Sign Out
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="main-content">
+        {!session ? (
+        supabase ? (
+          <div style={{ maxWidth: '400px', margin: '50px auto 0' }}> {/* Center Auth UI */}
+            <Auth
+              supabaseClient={supabase}
+              appearance={{
+                theme: ThemeSupa,
+                // Tùy chỉnh biến CSS nếu cần, hoặc để ThemeSupa tự xử lý
+                // variables: { default: { colors: { brand: 'red', brandAccent: 'darkred' } } }
+              }}
+              providers={['google', 'github']}
+              theme={theme} // Truyền theme hiện tại vào Auth UI
+            />
+          </div>
         ) : (
           <div>Error: Supabase client not initialized. Check environment variables.</div>
         )
       ) : (
         <Dashboard session={session} />
       )}
-    </div>
+      </div> {/* End main-content */}
+    </div> /* End app-container */
   );
 }
 
