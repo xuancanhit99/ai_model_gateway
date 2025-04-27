@@ -1,8 +1,8 @@
 # app/api/routes/openai_compat.py
 from fastapi import APIRouter, Depends, HTTPException, Header, status, Request
-from fastapi.responses import StreamingResponse # Import StreamingResponse
+from fastapi.responses import StreamingResponse
 from typing import Dict, Any, Optional, List
-from app.core.auth import verify_api_key
+from app.core.auth import verify_api_key_with_provider_keys  # Sử dụng phiên bản nâng cao
 from app.models.schemas import (
     ChatCompletionRequest, 
     ErrorResponse,
@@ -31,7 +31,7 @@ router = APIRouter()
 )
 async def create_chat_completion(
     request: Request,
-    user_info: Dict[str, Any] = Depends(verify_api_key),
+    auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys),  # Sử dụng phiên bản nâng cao
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
     x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
     x_gigachat_api_key: Optional[str] = Header(None, alias="X-GigaChat-API-Key"),
@@ -48,15 +48,30 @@ async def create_chat_completion(
         messages = body.get("messages", [])
         temperature = body.get("temperature", 0.7)
         max_tokens = body.get("max_tokens", None)
-        stream = body.get("stream", False) # Check for stream parameter
+        stream = body.get("stream", False)
 
-        # Thu thập API key
+        # Lấy provider keys từ DB (đã được giải mã)
+        db_provider_keys = auth_info.get("provider_keys", {})
+        
+        # Chuẩn bị API keys dictionary với thứ tự ưu tiên:
+        # 1. Từ header
+        # 2. Từ DB (provider keys của người dùng)
+        # 3. Từ settings (mặc định)
         provider_api_keys = {}
-        google_key = x_google_api_key
-        grok_key = x_xai_api_key
-        gigachat_key = x_gigachat_api_key
-        perplexity_key = x_perplexity_api_key
+        
+        # Google key
+        google_key = x_google_api_key or db_provider_keys.get("google") or get_settings().GOOGLE_AI_STUDIO_API_KEY
+        
+        # Grok key
+        grok_key = x_xai_api_key or db_provider_keys.get("xai") or get_settings().XAI_API_KEY
+        
+        # GigaChat key
+        gigachat_key = x_gigachat_api_key or db_provider_keys.get("gigachat") or get_settings().GIGACHAT_AUTH_KEY
+        
+        # Perplexity key
+        perplexity_key = x_perplexity_api_key or db_provider_keys.get("perplexity") or get_settings().PERPLEXITY_API_KEY
 
+        # Thêm key vào dictionary nếu có
         if google_key:
             provider_api_keys["google"] = google_key
         if grok_key:
@@ -114,7 +129,7 @@ async def create_chat_completion(
     summary="List available models"
 )
 async def list_models(
-    user_info: Dict[str, Any] = Depends(verify_api_key)
+    auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys)  # Sử dụng phiên bản nâng cao
 ):
     """Liệt kê các mô hình được hỗ trợ (Gemini, Grok, GigaChat, Perplexity Sonar) với tiền tố provider."""
     # Lấy settings để truy cập model names nếu cần (hoặc hardcode như hiện tại)

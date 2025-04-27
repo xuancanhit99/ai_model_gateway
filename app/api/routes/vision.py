@@ -1,9 +1,9 @@
 # app/api/routes/vision.py
-from fastapi import APIRouter, File, UploadFile, HTTPException, status, Header, Form, Depends # Added Depends
-from typing import Optional, Dict, Any # Added Any
+from fastapi import APIRouter, File, UploadFile, HTTPException, status, Header, Form, Depends
+from typing import Optional, Dict, Any
 from app.models.schemas import VisionResponse, ErrorResponse
 from app.services.model_router import ModelRouter
-from app.core.auth import verify_api_key # Import the new auth dependency
+from app.core.auth import verify_api_key_with_provider_keys  # Sử dụng phiên bản nâng cao
 from app.core.config import get_settings
 
 router = APIRouter()
@@ -29,7 +29,7 @@ async def extract_text_from_image(
         model: Optional[str] = Form(settings.GEMINI_VISION_MODEL_NAME, description="Model ID (e.g., 'google/gemini-pro-vision', 'x-ai/grok-vision')"),
         x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
         x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
-        _: Dict[str, Any] = Depends(verify_api_key) # Mark auth_info as unused
+        auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys)  # Sử dụng verify_api_key_with_provider_keys
     ):
     """
     Receives an image file and routes the text extraction request
@@ -38,10 +38,20 @@ async def extract_text_from_image(
     if not file:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No upload file sent.")
 
-    # Prepare API keys dictionary
+    # Lấy provider keys từ DB (đã được giải mã)
+    db_provider_keys = auth_info.get("provider_keys", {})
+    
+    # Chuẩn bị API keys dictionary với thứ tự ưu tiên:
+    # 1. Từ header
+    # 2. Từ DB (provider keys của người dùng)
+    # 3. Từ settings (mặc định)
     provider_api_keys: Dict[str, str] = {}
-    google_key = x_google_api_key or settings.GOOGLE_AI_STUDIO_API_KEY
-    grok_key = x_xai_api_key or settings.XAI_API_KEY
+    
+    # Google key
+    google_key = x_google_api_key or db_provider_keys.get("google") or settings.GOOGLE_AI_STUDIO_API_KEY
+    
+    # Grok key
+    grok_key = x_xai_api_key or db_provider_keys.get("xai") or settings.XAI_API_KEY
 
     if google_key:
         provider_api_keys["google"] = google_key

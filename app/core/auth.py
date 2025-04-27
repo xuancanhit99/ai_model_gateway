@@ -3,14 +3,15 @@ import secrets
 import string
 import bcrypt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordBearer # Added OAuth2PasswordBearer
-from typing import Dict, Any, Tuple, Optional # Added Optional
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordBearer
+from typing import Dict, Any, Tuple, Optional
 import logging
-from datetime import datetime, timedelta, timezone # Added datetime imports
-from jose import JWTError, jwt # Added jose imports
-from pydantic import BaseModel, Field # Added pydantic imports
+from datetime import datetime, timedelta, timezone
+from jose import JWTError, jwt
+from pydantic import BaseModel, Field
+from cryptography.fernet import Fernet  # Thêm import Fernet
 
-from .config import get_settings # Import get_settings
+from .config import get_settings
 
 from .supabase_client import get_supabase_client
 from supabase import Client
@@ -279,3 +280,96 @@ async def get_current_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Lỗi máy chủ nội bộ trong quá trình xác thực JWT."
         )
+
+# --- Provider Key Management ---
+import base64
+
+async def get_user_provider_keys(supabase: Client, user_id: str) -> Dict[str, str]:
+    """
+    Retrieve decrypted provider keys that have been selected for a user.
+    
+    Args:
+        supabase: Supabase client
+        user_id: User ID from auth
+        
+    Returns:
+        Dict with provider names as keys and decrypted API keys as values
+    """
+    try:
+        # Query for selected keys (is_selected=true) for this user
+        response = supabase.table("user_provider_keys").select(
+            "provider_name", "api_key_encrypted"
+        ).eq("user_id", user_id).eq("is_selected", True).execute()
+        
+        if not response.data:
+            logger.debug(f"No selected provider keys found for user {user_id}")
+            return {}
+            
+        # Decrypt each key
+        result = {}
+        for item in response.data:
+            provider = item.get("provider_name")
+            encrypted_key = item.get("api_key_encrypted")
+            
+            if not provider or not encrypted_key:
+                continue
+                
+            try:
+                # Get encryption key
+                key = get_encryption_key()
+                f = Fernet(base64.urlsafe_b64encode(key))
+                decrypted_key = f.decrypt(encrypted_key.encode()).decode()
+                result[provider] = decrypted_key
+            except Exception as e:
+                logger.error(f"Error decrypting key for provider {provider}: {e}")
+                # Skip this key if decryption fails
+                continue
+                
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error retrieving provider keys for user {user_id}: {e}")
+        return {}  # Return empty dict on error to avoid breaking the API
+
+def get_encryption_key() -> bytes:
+    """Get encryption key from settings or generate one"""
+    # In production, you should store this key securely and persistently
+    # For now, we'll use a derived key from SUPABASE_SERVICE_ROLE_KEY for simplicity
+    from app.core.config import get_settings
+    settings = get_settings()
+    
+    # WARNING: In a real production environment, you would want a dedicated 
+    # encryption key that is properly managed and stored securely
+    if not settings.SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError("Server encryption configuration missing")
+    
+    # Derive a 32-byte key (suitable for Fernet)
+    # In production, use a proper key management solution
+    import hashlib
+    derived_key = hashlib.sha256(settings.SUPABASE_SERVICE_ROLE_KEY.encode()).digest()
+    return derived_key
+
+# --- Enhanced API Key Dependency ---
+
+async def verify_api_key_with_provider_keys(
+    credentials: HTTPAuthorizationCredentials = Depends(api_key_scheme),
+    supabase: Client = Depends(get_supabase_client)
+) -> Dict[str, Any]:
+    """
+    Extended version of verify_api_key that also retrieves selected provider keys.
+    
+    Returns:
+        Dict containing user_id, key_prefix, and provider_keys dictionary
+    """
+    # First verify the API key like normal
+    auth_info = await verify_api_key(credentials, supabase)
+    
+    # Then get any selected provider keys for this user
+    user_id = auth_info.get("user_id")
+    if user_id:
+        provider_keys = await get_user_provider_keys(supabase, user_id)
+        auth_info["provider_keys"] = provider_keys
+    else:
+        auth_info["provider_keys"] = {}
+        
+    return auth_info

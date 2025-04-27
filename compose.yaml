@@ -32,6 +32,9 @@ services:
       - ./logs:/app/logs
     networks:
       - ai_gateway_network
+      - proxy-network
+    labels:
+      - "com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy=true"
 
   frontend_dashboard:
     build:
@@ -50,7 +53,13 @@ services:
     restart: unless-stopped
     networks:
       - ai_gateway_network
+      - proxy-network
+    labels:
+      - "com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy=true"
 
 networks:
   ai_gateway_network:
     driver: bridge
+  proxy-network:
+    external: true
+    name: proxy-network

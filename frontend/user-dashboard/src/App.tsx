@@ -5,7 +5,9 @@ import { ThemeSupa } from '@supabase/auth-ui-shared';
 import type { Session } from '@supabase/supabase-js';
 import ApiKeyList from './components/ApiKeyList';
 import ApiKeyCreateForm from './components/ApiKeyCreateForm';
-import './App.css'; // Import CSS chính
+import ProviderKeyManager from './components/ProviderKeyManager';
+import { Tabs, Tab, Box } from '@mui/material';
+import './App.css';
 
 // Kiểu dữ liệu cho theme
 type Theme = 'light' | 'dark';
@@ -13,6 +15,11 @@ type Theme = 'light' | 'dark';
 // Main dashboard component after login
 function Dashboard({ session }: { session: Session }) {
   const [refreshCounter, setRefreshCounter] = useState(0);
+  const [activeTab, setActiveTab] = useState(0);
+
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue);
+  };
 
   const handleKeyCreated = useCallback(() => {
     console.log("New key created, triggering list refresh...");
@@ -20,17 +27,33 @@ function Dashboard({ session }: { session: Session }) {
   }, []);
 
   return (
-    <div className="dashboard-content"> {/* Add class for potential styling */}
-      {/* Welcome message can stay here or move to app bar if desired */}
+    <div className="dashboard-content">
       <h2>Dashboard</h2>
       <p>Welcome, {session.user.email}!</p>
-      <hr />
-      <ApiKeyList key={refreshCounter} session={session} onListChange={handleKeyCreated} />
-      <hr />
-      <ApiKeyCreateForm onKeyCreated={handleKeyCreated} />
-      {/* Sign out button moved to App Bar */}
-      {/* <hr style={{ marginTop: '30px' }}/>
-      <button onClick={() => supabase?.auth.signOut()}>Sign Out</button> */}
+      
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs 
+          value={activeTab} 
+          onChange={handleTabChange}
+          aria-label="dashboard tabs"
+          centered
+        >
+          <Tab label="Gateway API Keys" />
+          <Tab label="Provider API Keys" />
+        </Tabs>
+      </Box>
+
+      {activeTab === 0 && (
+        <>
+          <ApiKeyList key={refreshCounter} session={session} onListChange={handleKeyCreated} />
+          <hr />
+          <ApiKeyCreateForm onKeyCreated={handleKeyCreated} />
+        </>
+      )}
+
+      {activeTab === 1 && (
+        <ProviderKeyManager />
+      )}
     </div>
   );
 }

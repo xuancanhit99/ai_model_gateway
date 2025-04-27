@@ -1,6 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
-from app.api.routes import vision, health, chat, openai_compat, manage_keys # Import manage_keys
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.routes import vision, health, chat, openai_compat, manage_keys, manage_provider_keys # Thêm manage_provider_keys
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -9,6 +10,24 @@ app = FastAPI(
     title=settings.APP_NAME,
     description=settings.APP_DESCRIPTION,
     version=settings.APP_VERSION,
+)
+
+# Cấu hình CORS
+origins = [
+    "http://localhost",
+    "http://localhost:5173",  # Local Vite dev server
+    "http://localhost:6060",  # Local Nginx frontend
+    "https://ai-model-gateway.xuancanhit.io.vn",  # Production domain
+    "*",  # Cho phép tất cả origins trong môi trường phát triển
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Type", "Authorization"],
 )
 
 # Health route
@@ -25,6 +44,9 @@ app.include_router(openai_compat.router, prefix="/v1", tags=["OpenAI Standard"])
 
 # API Key Management routes
 app.include_router(manage_keys.router, tags=["API Key Management"]) # Prefix is defined in the router itself
+
+# Provider Key Management routes
+app.include_router(manage_provider_keys.router, tags=["Provider Key Management"]) # Prefix is defined in the router itself
 
 @app.get("/")
 async def root():
