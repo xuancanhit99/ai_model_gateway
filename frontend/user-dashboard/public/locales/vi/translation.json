@@ -1,0 +1,73 @@
+{
+  "appTitle": "AI Gateway",
+  "loading": "Đang tải...",
+  "authError": "Lỗi: Supabase client chưa được khởi tạo.",
+  "toggleDrawer": "Chuyển đổi ngăn kéo",
+  "menu": {
+    "gatewayKeys": "Khóa Gateway",
+    "providerKeys": "Khóa Nhà cung cấp"
+  },
+  "userInfo": {
+    "signOut": "Đăng xuất"
+  },
+  "header": {
+    "gatewayApiKeys": "Khóa API Gateway",
+    "providerApiKeys": "Khóa API Nhà cung cấp",
+    "switchToLight": "Chuyển sang chế độ Sáng",
+    "switchToDark": "Chuyển sang chế độ Tối",
+    "switchToVietnamese": "Chuyển sang tiếng Việt",
+    "switchToEnglish": "Chuyển sang tiếng Anh",
+    "changeLanguage": "Đổi ngôn ngữ"
+  },
+  "gatewayView": {
+    "description": "Quản lý khóa API để truy cập AI Model Gateway."
+  },
+  "providerView": {
+    "aboutTitle": "Giới thiệu về Khóa API Nhà cung cấp",
+    "aboutIntro": "Khóa API nhà cung cấp cho phép bạn sử dụng khóa API cá nhân của mình cho các dịch vụ như Google AI (Gemini), X.AI (Grok), GigaChat và Perplexity (Sonar) khi thực hiện yêu cầu thông qua cổng của chúng tôi.",
+    "aboutBenefitsTitle": "Bằng cách lưu trữ khóa của riêng bạn, bạn có thể:",
+    "aboutBenefit1": "Đảm bảo các yêu cầu của bạn được tính phí vào tài khoản của riêng bạn với các nhà cung cấp này",
+    "aboutBenefit2": "Sử dụng các mô hình hoặc tính năng có thể không được bật trên khóa mặc định của hệ thống chúng tôi",
+    "aboutBenefit3": "Ngăn chặn việc đạt đến giới hạn tỷ lệ có thể được chia sẻ giữa những người dùng khác",
+    "aboutSecurity": "Khóa API của bạn được mã hóa trước khi lưu trữ và quản lý an toàn.",
+    "noKeys": "Chưa có khóa nhà cung cấp nào được lưu trữ. Thêm khóa của riêng bạn để sử dụng thay vì mặc định của hệ thống."
+  },
+  "providerCreateForm": {
+    "title": "Thêm Khóa API Nhà cung cấp",
+    "providerLabel": "Nhà cung cấp",
+    "apiKeyLabel": "Khóa API",
+    "apiKeyPlaceholder": "Nhập khóa API của bạn",
+    "submitButton": "Thêm Khóa",
+    "addingButton": "Đang thêm...",
+    "selectProvider": "Chọn Nhà cung cấp",
+    "selectProviderHelper": "Chọn nhà cung cấp AI cho khóa API này",
+    "apiKeyHelper": "Khóa API của bạn sẽ được mã hóa trước khi lưu trữ",
+    "descriptionLabel": "Mô tả (Tùy chọn)",
+    "descriptionHelper": "Thêm tên thân thiện để giúp nhận dạng khóa này",
+    "keyAddedSuccess": "Đã thêm khóa nhà cung cấp thành công!",
+    "keyAddedError": "Lỗi khi thêm khóa nhà cung cấp:",
+    "providerAndApiKeyRequired": "Yêu cầu Nhà cung cấp và Khóa API",
+    "notAuthenticated": "Chưa xác thực. Vui lòng đăng nhập lại.",
+    "networkError": "Đã xảy ra lỗi mạng. Vui lòng kiểm tra kết nối của bạn.",
+    "requestAborted": "Yêu cầu đã bị hủy.",
+    "createFailed": "Không thể tạo khóa nhà cung cấp"
+  },
+  "providerList": {
+     "title": "Các Khóa Nhà cung cấp đã lưu",
+     "fetchError": "Lỗi khi lấy danh sách khóa nhà cung cấp:",
+     "updateSelectionError": "Lỗi khi cập nhật lựa chọn:",
+     "deleteError": "Lỗi khi xóa khóa:",
+     "selectSuccess": "Đã chọn khóa thành công cho {{provider}}",
+     "unselectSuccess": "Đã bỏ chọn khóa thành công cho {{provider}}",
+     "deleteSuccess": "Đã xóa khóa API {{provider}} thành công",
+     "deleteConfirm": "Bạn có chắc chắn muốn xóa khóa API {{provider}} này không?",
+     "deleteButton": "Xóa",
+     "headerProvider": "Nhà cung cấp",
+     "headerDescription": "Mô tả",
+     "headerCreated": "Ngày tạo",
+     "headerDefault": "Mặc định",
+     "headerActions": "Hành động",
+     "noDescription": "Không có mô tả"
+  },
+  "translationLoading": "Đang tải bản dịch..."
+}

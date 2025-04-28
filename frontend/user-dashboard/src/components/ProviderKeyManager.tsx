@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next'; // Import useTranslation
 import { Box, Typography, Paper, Tabs, Tab } from '@mui/material';
 import ProviderKeyList from './ProviderKeyList';
 import ProviderKeyCreateForm from './ProviderKeyCreateForm';
 
 const ProviderKeyManager: React.FC = () => {
+  const { t } = useTranslation(); // Use the hook
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [activeTab, setActiveTab] = useState(0);
 
@@ -28,8 +30,9 @@ const ProviderKeyManager: React.FC = () => {
           textColor="primary"
           centered
         >
-          <Tab label="My Provider API Keys" />
-          <Tab label="Add New Key" />
+          {/* Use translation for tab labels */}
+          <Tab label={t('providerList.title')} />
+          <Tab label={t('providerCreateForm.title')} />
         </Tabs>
       </Paper>
 
@@ -42,29 +45,29 @@ const ProviderKeyManager: React.FC = () => {
       )}
 
       <Paper sx={{ p: 3, mt: 4 }}>
+        {/* Use translation for the "About" section */}
         <Typography variant="h6" gutterBottom>
-          About Provider API Keys
+          {t('providerView.aboutTitle')}
         </Typography>
         <Typography variant="body2" paragraph>
-          Provider API keys allow you to use your personal API keys for services like Google AI (Gemini), 
-          X.AI (Grok), GigaChat, and Perplexity (Sonar) when making requests through our gateway.
+          {t('providerView.aboutIntro')}
         </Typography>
         <Typography variant="body2" paragraph>
-          By storing your own keys, you can:
+          {t('providerView.aboutBenefitsTitle')}
         </Typography>
         <ul>
           <Typography component="li" variant="body2">
-            Ensure your requests are billed to your own account with these providers
+            {t('providerView.aboutBenefit1')}
           </Typography>
           <Typography component="li" variant="body2">
-            Use models or features that may not be enabled on our system's default keys
+            {t('providerView.aboutBenefit2')}
           </Typography>
           <Typography component="li" variant="body2">
-            Prevent hitting rate limits that might be shared across other users
+            {t('providerView.aboutBenefit3')}
           </Typography>
         </ul>
-        <Typography variant="body2" paragraph>
-          Your API keys are encrypted before storage and securely managed.
+        <Typography variant="body2" paragraph sx={{ mt: 2 }}> {/* Added margin top for spacing */}
+          {t('providerView.aboutSecurity')}
         </Typography>
       </Paper>
     </Box>

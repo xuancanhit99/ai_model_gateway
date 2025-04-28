@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next'; // Import useTranslation
 import { supabase } from '../supabaseClient';
 import {
   Box,
@@ -20,6 +21,7 @@ interface ProviderKeyCreateFormProps {
 }
 
 const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess }) => {
+  const { t } = useTranslation(); // Use the hook
   const [provider, setProvider] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [name, setName] = useState('');
@@ -35,7 +37,8 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
     e.preventDefault();
     
     if (!provider || !apiKey) {
-      setError('Provider and API Key are required');
+      // Use translation for error message
+      setError(t('providerCreateForm.providerAndApiKeyRequired', 'Provider and API Key are required'));
       return;
     }
     
@@ -54,7 +57,8 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       const accessToken = sessionResult.data.session?.access_token;
       
       if (!accessToken) {
-        throw new Error('Not authenticated. Please sign in again.');
+        // Use translation for error message
+        throw new Error(t('providerCreateForm.notAuthenticated', 'Not authenticated. Please sign in again.'));
       }
       
       // Thử gửi yêu cầu qua XMLHttpRequest để xử lý sâu hơn các vấn đề mixed content
@@ -107,12 +111,14 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
         
         xhr.onerror = function() {
           console.error('XHR Network Error');
-          reject(new Error('Network error occurred. Please check your connection.'));
+          // Use translation for error message
+          reject(new Error(t('providerCreateForm.networkError', 'Network error occurred. Please check your connection.')));
         };
         
         xhr.onabort = function() {
           console.error('XHR Aborted');
-          reject(new Error('Request was aborted.'));
+          // Use translation for error message
+          reject(new Error(t('providerCreateForm.requestAborted', 'Request was aborted.')));
         };
         
         const data = JSON.stringify({
@@ -126,7 +132,9 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       
     } catch (error: any) {
       console.error('Error creating provider key:', error);
-      setError(error.message || 'Failed to create provider key');
+      // Use translation for error message, include original error if possible
+      const defaultError = t('providerCreateForm.createFailed', 'Failed to create provider key');
+      setError(`${t('providerCreateForm.keyAddedError')} ${error.message || defaultError}`);
     } finally {
       setLoading(false);
     }
@@ -134,8 +142,9 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
 
   return (
     <Paper sx={{ p: 3, mb: 3 }}>
+      {/* Use translation for form title */}
       <Typography variant="h6" gutterBottom>
-        Add Provider API Key
+        {t('providerCreateForm.title')}
       </Typography>
       
       {error && (
@@ -146,17 +155,18 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       
       {success && (
         <Alert severity="success" sx={{ mb: 2 }}>
-          Provider API key added successfully!
+          {t('providerCreateForm.keyAddedSuccess')} {/* Use translation */}
         </Alert>
       )}
       
       <Box component="form" onSubmit={handleSubmit}>
         <FormControl fullWidth sx={{ mb: 2 }}>
-          <InputLabel id="provider-select-label">Provider</InputLabel>
+          {/* Use translation for label */}
+          <InputLabel id="provider-select-label">{t('providerCreateForm.providerLabel')}</InputLabel>
           <Select
             labelId="provider-select-label"
             value={provider}
-            label="Provider"
+            label={t('providerCreateForm.providerLabel')} // Use translation for label prop as well
             onChange={handleProviderChange}
             required
           >
@@ -165,27 +175,30 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
             <MenuItem value="gigachat">GigaChat</MenuItem>
             <MenuItem value="perplexity">Perplexity (Sonar)</MenuItem>
           </Select>
-          <FormHelperText>Select the AI provider for this API key</FormHelperText>
+          {/* Use translation for helper text */}
+          <FormHelperText>{t('providerCreateForm.selectProviderHelper', 'Select the AI provider for this API key')}</FormHelperText>
         </FormControl>
         
         <TextField
           fullWidth
-          label="API Key"
+          label={t('providerCreateForm.apiKeyLabel')} // Use translation
           value={apiKey}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiKey(e.target.value)}
           margin="normal"
           required
           type="password"
-          helperText="Your API key will be encrypted before storage"
+          // Use translation for helper text
+          helperText={t('providerCreateForm.apiKeyHelper', 'Your API key will be encrypted before storage')}
         />
         
         <TextField
           fullWidth
-          label="Description (Optional)"
+          label={t('providerCreateForm.descriptionLabel', 'Description (Optional)')} // Use translation
           value={name}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
           margin="normal"
-          helperText="Add a friendly name to help identify this key"
+          // Use translation for helper text
+          helperText={t('providerCreateForm.descriptionHelper', 'Add a friendly name to help identify this key')}
         />
         
         <Button
@@ -195,7 +208,8 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
           disabled={loading}
           sx={{ mt: 2 }}
         >
-          {loading ? 'Adding...' : 'Add API Key'}
+          {/* Use translation for button text */}
+          {loading ? t('providerCreateForm.addingButton', 'Adding...') : t('providerCreateForm.submitButton')}
         </Button>
       </Box>
     </Paper>

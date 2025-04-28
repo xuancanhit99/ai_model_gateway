@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next'; // Import useTranslation
 import { supabase } from './supabaseClient';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
@@ -7,13 +8,14 @@ import ApiKeyList from './components/ApiKeyList';
 import ApiKeyCreateForm from './components/ApiKeyCreateForm';
 import ProviderKeyManager from './components/ProviderKeyManager';
 import {
-  Tabs, Tab, Box, ThemeProvider, CssBaseline, PaletteMode, AppBar, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useTheme, useMediaQuery, Button, Container, Paper, Alert, Avatar, Tooltip // Import Avatar, Tooltip
+  Tabs, Tab, Box, ThemeProvider, CssBaseline, PaletteMode, AppBar, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useTheme, useMediaQuery, Button, Container, Paper, Alert, Avatar, Tooltip, Menu, MenuItem // Import Menu, MenuItem
 } from '@mui/material'; // Import layout components
 import MenuIcon from '@mui/icons-material/Menu'; // Import Menu icon
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'; // Import ChevronLeftIcon
 import LogoutIcon from '@mui/icons-material/Logout'; // Import Logout icon
 import Brightness4Icon from '@mui/icons-material/Brightness4'; // Dark mode icon
 import Brightness7Icon from '@mui/icons-material/Brightness7'; // Light mode icon
+import TranslateIcon from '@mui/icons-material/Translate'; // Language icon
 import KeyIcon from '@mui/icons-material/Key'; // Example icon
 import VpnKeyIcon from '@mui/icons-material/VpnKey'; // Example icon
 import { getAppTheme } from './theme';
@@ -29,6 +31,7 @@ import './App.css';
 const drawerWidth = 240;
 
 function App() {
+  const { t, i18n } = useTranslation(); // Use the hook
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [themeMode, setThemeMode] = useState<PaletteMode>(() => {
@@ -40,6 +43,12 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(!isMobile);
   const [activeView, setActiveView] = useState<'gateway' | 'provider'>('gateway');
   const [refreshGatewayCounter, setRefreshGatewayCounter] = useState(0); // State to refresh gateway list
+  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null); // State for language menu anchor
+  // const [language, setLanguage] = useState<'en' | 'vi'>(() => { // No longer needed, i18next handles this
+  //  const storedLang = localStorage.getItem('app-language');
+  //  // Default to English if no valid language is stored or if it's not 'en' or 'vi'
+  //  return (storedLang === 'en' || storedLang === 'vi') ? storedLang : 'en';
+  // }); // State for language
 
   // Callback for Gateway key creation
   const handleGatewayKeyCreated = useCallback(() => {
@@ -94,10 +103,38 @@ function App() {
     setLoading(false); // Kết thúc loading
   }, [themeMode]); // Chạy lại khi themeMode thay đổi
 
+  // Effect to save language to localStorage - No longer needed, LanguageDetector handles this
+  // useEffect(() => {
+  //   localStorage.setItem('app-language', language);
+  //   // TODO: Integrate with i18n library here to actually change the language
+  //   console.log(`App language set to: ${language}`); // Placeholder log
+  // }, [language]);
+
   // Hàm chuyển đổi theme mode
   const toggleTheme = () => {
     setThemeMode(prevMode => (prevMode === 'light' ? 'dark' : 'light'));
   };
+
+  // --- Language Menu Handlers ---
+  const handleLanguageMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setLanguageMenuAnchorEl(event.currentTarget);
+  };
+
+  const handleLanguageMenuClose = () => {
+    setLanguageMenuAnchorEl(null);
+  };
+
+  const changeLanguage = (lang: 'en' | 'vi') => {
+    i18n.changeLanguage(lang);
+    handleLanguageMenuClose();
+  };
+  // --- End Language Menu Handlers ---
+
+  // Function to toggle language using i18next - Replaced by menu
+  // const toggleLanguage = () => {
+  //   const newLang = i18n.language === 'en' ? 'vi' : 'en';
+  //   i18n.changeLanguage(newLang);
+  // };
 
   if (loading && !session) { // Show loading only when checking session initially
      // Basic loading indicator, can be replaced with MUI Skeleton later
@@ -105,7 +142,7 @@ function App() {
         <ThemeProvider theme={muiTheme}>
             <CssBaseline />
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-                <Typography>Loading...</Typography>
+                <Typography>{t('loading')}</Typography> {/* Use translation */}
             </Box>
         </ThemeProvider>
     );
@@ -121,7 +158,7 @@ function App() {
           <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', p: 2 }}> {/* Added flexDirection and padding */}
              {/* Add Header for Login Page */}
              <Typography variant="h4" component="h1" gutterBottom color="primary" sx={{ mb: 4 }}> {/* Added margin bottom */}
-                AI Gateway
+                {t('appTitle')} {/* Use translation */}
              </Typography>
             <Box sx={{ maxWidth: '400px', width: '100%' }}> {/* Removed padding here, added to parent */}
               <Auth
@@ -134,7 +171,7 @@ function App() {
           </Box>
         ) : (
           <Container maxWidth="lg" sx={{ px: 3, pt: 5 }}> {/* Add padding top */}
-            <Alert severity="error">Error: Supabase client not initialized.</Alert>
+            <Alert severity="error">{t('authError')}</Alert> {/* Use translation */}
           </Container>
         )
       ) : (
@@ -142,10 +179,10 @@ function App() {
         <>
           {/* Menu button positioned fixed top-left (only when logged in) */}
           <IconButton
-            color="inherit" // Will inherit color from theme's text.primary
-            aria-label="toggle drawer"
-            edge="start"
-            onClick={handleDrawerToggle}
+           color="inherit" // Will inherit color from theme's text.primary
+           aria-label={t('toggleDrawer')} // Use translation
+           edge="start"
+           onClick={handleDrawerToggle}
             sx={{
               position: 'fixed', // Fix position
               top: 16, // Adjust position as needed
@@ -178,7 +215,7 @@ function App() {
               {/* Drawer Header */}
               <Toolbar sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 1 }}>
                 <Typography variant="h6" noWrap component="div" color="primary">
-                  AI Gateway
+                  {t('appTitle')} {/* Use translation */}
                 </Typography>
               </Toolbar>
               <Divider />
@@ -201,7 +238,7 @@ function App() {
                     }}
                   >
                     <ListItemIcon sx={{ minWidth: '40px' }}><KeyIcon color={activeView === 'gateway' ? 'primary' : 'inherit'} /></ListItemIcon>
-                    <ListItemText primary="Gateway Keys" />
+                    <ListItemText primary={t('menu.gatewayKeys')} />
                   </ListItemButton>
                 </ListItem>
                 <ListItem key="Provider Keys" disablePadding sx={{ display: 'block', my: 0.5 }}>
@@ -220,7 +257,7 @@ function App() {
                     }}
                   >
                     <ListItemIcon sx={{ minWidth: '40px' }}><VpnKeyIcon color={activeView === 'provider' ? 'primary' : 'inherit'} /></ListItemIcon>
-                    <ListItemText primary="Provider Keys" />
+                    <ListItemText primary={t('menu.providerKeys')} />
                   </ListItemButton>
                 </ListItem>
               </List>
@@ -240,7 +277,8 @@ function App() {
                       {session.user.email}
                     </Typography>
                   </Box>
-                  <Tooltip title="Sign Out">
+                  {/* Removed comment inside Tooltip to fix TS error */}
+                  <Tooltip title={t('userInfo.signOut')}>
                     <IconButton onClick={() => supabase?.auth.signOut()} size="small">
                       <LogoutIcon fontSize="small" />
                     </IconButton>
@@ -274,12 +312,40 @@ function App() {
               {/* Header integrated into Main Content */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, px: 3 }}>
                 <Typography variant="h4" component="h1">
-                  {activeView === 'gateway' ? 'Gateway API Keys' : 'Provider API Keys'}
+                  {activeView === 'gateway' ? t('header.gatewayApiKeys') : t('header.providerApiKeys')}
                 </Typography>
                 <Box>
-                  <IconButton sx={{ ml: 1 }} onClick={toggleTheme} color="inherit" title={`Switch to ${themeMode === 'light' ? 'Dark' : 'Light'} Mode`}>
-                    {themeMode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
-                  </IconButton>
+                  {/* Language Menu Button */}
+                  <Tooltip title={t('header.changeLanguage', 'Change Language')}> {/* Add a generic key */}
+                    <IconButton
+                      sx={{ ml: 1 }}
+                      onClick={handleLanguageMenuOpen}
+                      color="inherit"
+                      aria-controls={languageMenuAnchorEl ? 'language-menu' : undefined}
+                      aria-haspopup="true"
+                      aria-expanded={languageMenuAnchorEl ? 'true' : undefined}
+                    >
+                      <TranslateIcon />
+                    </IconButton>
+                  </Tooltip>
+                  <Menu
+                    id="language-menu"
+                    anchorEl={languageMenuAnchorEl}
+                    open={Boolean(languageMenuAnchorEl)}
+                    onClose={handleLanguageMenuClose}
+                    MenuListProps={{
+                      'aria-labelledby': 'language-button',
+                    }}
+                  >
+                    <MenuItem onClick={() => changeLanguage('en')} selected={i18n.language === 'en'}>English</MenuItem>
+                    <MenuItem onClick={() => changeLanguage('vi')} selected={i18n.language === 'vi'}>Tiếng Việt</MenuItem>
+                  </Menu>
+                  {/* Theme Toggle Button */}
+                  <Tooltip title={t(themeMode === 'light' ? 'header.switchToDark' : 'header.switchToLight')}>
+                    <IconButton sx={{ ml: 1 }} onClick={toggleTheme} color="inherit">
+                      {themeMode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+                    </IconButton>
+                  </Tooltip>
                 </Box>
               </Box>
 
@@ -289,7 +355,7 @@ function App() {
                   {activeView === 'gateway' && (
                     <>
                       <Typography variant="body1" gutterBottom sx={{ mb: 3 }}>
-                        Manage API keys for accessing the AI Model Gateway.
+                        {t('gatewayView.description')}
                       </Typography>
                       <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
                         <ApiKeyList refreshTrigger={refreshGatewayCounter} session={session} onListChange={handleGatewayKeyCreated} />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next'; // Import useTranslation
 import { supabase } from '../supabaseClient';
 import {
   Box,
@@ -35,6 +36,7 @@ const providerDisplayNames: Record<string, string> = {
 };
 
 const ProviderKeyList: React.FC = () => {
+  const { t } = useTranslation(); // Use the hook
   const [providerKeys, setProviderKeys] = useState<ProviderKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +48,8 @@ const ProviderKeyList: React.FC = () => {
       setError(null);
       
       if (!supabase) {
-        throw new Error('Supabase client not initialized');
+        // Use translation for error
+        throw new Error(t('authError', 'Supabase client not initialized'));
       }
       
       const { data, error } = await supabase
@@ -60,7 +63,8 @@ const ProviderKeyList: React.FC = () => {
       setProviderKeys(data || []);
     } catch (error: any) {
       console.error('Error fetching provider keys:', error);
-      setError(`Error fetching provider keys: ${error.message}`);
+      // Use translation for error
+      setError(`${t('providerList.fetchError', 'Error fetching provider keys:')} ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -70,41 +74,57 @@ const ProviderKeyList: React.FC = () => {
     fetchProviderKeys();
   }, []);
 
-  const handleSelectKey = async (keyId: string, providerName: string) => {
+  const handleSelectKey = async (keyId: string, providerName: string, currentIsSelected: boolean) => {
     try {
       setError(null);
       
       if (!supabase) {
-        throw new Error('Supabase client not initialized');
+        // Use translation for error
+        throw new Error(t('authError', 'Supabase client not initialized'));
+      }
+
+      let newIsSelectedValue = !currentIsSelected;
+      let successMsg = '';
+
+      if (newIsSelectedValue) {
+        // If selecting a new key, first unselect all keys for this provider
+        await supabase
+          .from('user_provider_keys')
+          .update({ is_selected: false })
+          .eq('provider_name', providerName);
+        
+        // Use translation for success message (consider adding specific keys later if needed)
+        successMsg = t('providerList.selectSuccess', { provider: providerDisplayNames[providerName] || providerName });
+      } else {
+        // If unselecting the current key
+        // Use translation for success message
+        successMsg = t('providerList.unselectSuccess', { provider: providerDisplayNames[providerName] || providerName });
       }
       
-      // First unselect all keys for this provider (not needed but safer)
-      await supabase
-        .from('user_provider_keys')
-        .update({ is_selected: false })
-        .eq('provider_name', providerName);
-      
-      // Then select this key
+      // Then update the clicked key
       const { error } = await supabase
         .from('user_provider_keys')
-        .update({ is_selected: true })
+        .update({ is_selected: newIsSelectedValue })
         .eq('id', keyId);
       
       if (error) throw error;
       
-      setSuccessMessage(`Successfully selected key for ${providerDisplayNames[providerName] || providerName}`);
+      setSuccessMessage(successMsg);
       setTimeout(() => setSuccessMessage(null), 3000);
       
       // Refresh the list
       fetchProviderKeys();
     } catch (error: any) {
-      console.error('Error selecting provider key:', error);
-      setError(`Error selecting key: ${error.message}`);
+      console.error('Error updating provider key selection:', error);
+      // Use translation for error
+      setError(`${t('providerList.updateSelectionError', 'Error updating selection:')} ${error.message}`);
     }
   };
 
   const handleDeleteKey = async (keyId: string, providerName: string) => {
-    if (!window.confirm(`Are you sure you want to delete this ${providerDisplayNames[providerName] || providerName} API key?`)) {
+    // Use translation for confirmation dialog
+    const confirmMessage = t('providerList.deleteConfirm', { provider: providerDisplayNames[providerName] || providerName });
+    if (!window.confirm(confirmMessage)) {
       return;
     }
     
@@ -112,7 +132,8 @@ const ProviderKeyList: React.FC = () => {
       setError(null);
       
       if (!supabase) {
-        throw new Error('Supabase client not initialized');
+        // Use translation for error
+        throw new Error(t('authError', 'Supabase client not initialized'));
       }
       
       const { error } = await supabase
@@ -122,14 +143,16 @@ const ProviderKeyList: React.FC = () => {
       
       if (error) throw error;
       
-      setSuccessMessage(`Successfully deleted ${providerDisplayNames[providerName] || providerName} API key`);
+      // Use translation for success message
+      setSuccessMessage(t('providerList.deleteSuccess', { provider: providerDisplayNames[providerName] || providerName }));
       setTimeout(() => setSuccessMessage(null), 3000);
       
       // Refresh the list
       fetchProviderKeys();
     } catch (error: any) {
       console.error('Error deleting provider key:', error);
-      setError(`Error deleting key: ${error.message}`);
+      // Use translation for error
+      setError(`${t('providerList.deleteError', 'Error deleting key:')} ${error.message}`);
     }
   };
 
@@ -143,8 +166,9 @@ const ProviderKeyList: React.FC = () => {
 
   return (
     <Box>
+      {/* Use translation for title */}
       <Typography variant="h6" gutterBottom>
-        Manage Provider API Keys
+        {t('providerList.title')}
       </Typography>
       
       {error && (
@@ -161,18 +185,19 @@ const ProviderKeyList: React.FC = () => {
       
       {providerKeys.length === 0 ? (
         <Alert severity="info">
-          You haven't added any provider API keys yet. Add your own keys to use them instead of the system defaults.
+          {t('providerView.noKeys')} {/* Use translation */}
         </Alert>
       ) : (
         <TableContainer component={Paper}>
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell>Provider</TableCell>
-                <TableCell>Description</TableCell>
-                <TableCell>Created</TableCell>
-                <TableCell align="center">Default</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                {/* Use translation for table headers */}
+                <TableCell>{t('providerList.headerProvider', 'Provider')}</TableCell>
+                <TableCell>{t('providerList.headerDescription', 'Description')}</TableCell>
+                <TableCell>{t('providerList.headerCreated', 'Created')}</TableCell>
+                <TableCell align="center">{t('providerList.headerDefault', 'Default')}</TableCell>
+                <TableCell align="right">{t('providerList.headerActions', 'Actions')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -190,12 +215,13 @@ const ProviderKeyList: React.FC = () => {
                       size="small"
                     />
                   </TableCell>
-                  <TableCell>{key.name || 'No description'}</TableCell>
+                  {/* Use translation for fallback description */}
+                  <TableCell>{key.name || t('providerList.noDescription', 'No description')}</TableCell>
                   <TableCell>{new Date(key.created_at).toLocaleString()}</TableCell>
                   <TableCell align="center">
                     <IconButton 
                       size="small" 
-                      onClick={() => handleSelectKey(key.id, key.provider_name)}
+                      onClick={() => handleSelectKey(key.id, key.provider_name, key.is_selected)}
                       color={key.is_selected ? "primary" : "default"}
                     >
                       {key.is_selected ? <CheckIcon /> : <RadioButtonUncheckedIcon />}
@@ -203,9 +229,10 @@ const ProviderKeyList: React.FC = () => {
                   </TableCell>
                   <TableCell align="right">
                     <IconButton 
-                      size="small" 
-                      color="error" 
+                      size="small"
+                      color="error"
                       onClick={() => handleDeleteKey(key.id, key.provider_name)}
+                      aria-label={t('providerList.deleteButton')} // Add aria-label for accessibility
                     >
                       <DeleteIcon />
                     </IconButton>
