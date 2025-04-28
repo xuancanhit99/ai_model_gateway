@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'; // Added useCal
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast'; // Import toast
 import type { Session } from '@supabase/supabase-js';
+import { useTranslation } from 'react-i18next'; // Import useTranslation
 import {
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Typography, Box, CircularProgress, Alert, IconButton, Tooltip,
     Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField, Button // Added Dialog components
@@ -28,6 +29,7 @@ interface ApiKeyListProps {
 }
 
 const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshTrigger }) => {
+    const { t } = useTranslation(); // Sử dụng hook useTranslation
     const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [deactivating, setDeactivating] = useState<string | null>(null); // State for deactivation loading
@@ -286,7 +288,8 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
 
             // Thành công! Cập nhật state cục bộ và hiển thị thông báo
             setKeys(prevKeys => prevKeys.filter(k => k.key_prefix !== keyPrefix));
-            toast.success(responseData.message || 'API Key permanently deleted successfully.');
+            // Sử dụng i18n cho thông báo, bỏ qua responseData.message
+            toast.success(t('apiKeys.deleteSuccess', 'API Key permanently deleted successfully.'));
             // No need to call onListChange here
  
         } catch (err: any) {
