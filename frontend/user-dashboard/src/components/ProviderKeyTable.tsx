@@ -13,6 +13,7 @@ import {
   TableCell,
   TableBody,
   CircularProgress,
+  useTheme, // Import useTheme
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
@@ -51,6 +52,7 @@ const ProviderKeyTable: React.FC<ProviderKeyTableProps> = ({
   onAddKeyClick, // Include the new prop
 }) => {
   const { t } = useTranslation();
+  const theme = useTheme(); // Khai báo sử dụng theme
 
   const getProviderColor = (name: string) => {
     switch (name) {
@@ -114,13 +116,29 @@ const ProviderKeyTable: React.FC<ProviderKeyTableProps> = ({
         />
       </Box>
       <TableContainer sx={{ maxHeight: 300, overflow: 'auto' }}>
-        <Table size="small">
+        <Table size="small" stickyHeader>
           <TableHead>
             <TableRow>
-              <TableCell>{t('providerList.headerDescription', 'Description')}</TableCell>
-              <TableCell>{t('providerList.headerCreated', 'Created')}</TableCell>
-              <TableCell align="center">{t('providerList.headerDefault', 'Default')}</TableCell>
-              <TableCell align="right">{t('providerList.headerActions', 'Actions')}</TableCell>
+              <TableCell sx={{ 
+                backgroundColor: theme.palette.mode === 'dark' 
+                  ? theme.palette.background.paper 
+                  : '#ffffff' 
+              }}>{t('providerList.headerDescription', 'Description')}</TableCell>
+              <TableCell sx={{ 
+                backgroundColor: theme.palette.mode === 'dark' 
+                  ? theme.palette.background.paper 
+                  : '#ffffff' 
+              }}>{t('providerList.headerCreated', 'Created')}</TableCell>
+              <TableCell sx={{ 
+                backgroundColor: theme.palette.mode === 'dark' 
+                  ? theme.palette.background.paper 
+                  : '#ffffff' 
+              }} align="center">{t('providerList.headerDefault', 'Default')}</TableCell>
+              <TableCell sx={{ 
+                backgroundColor: theme.palette.mode === 'dark' 
+                  ? theme.palette.background.paper 
+                  : '#ffffff' 
+              }} align="right">{t('providerList.headerActions', 'Actions')}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>

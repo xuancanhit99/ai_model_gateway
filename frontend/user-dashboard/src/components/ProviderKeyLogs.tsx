@@ -13,7 +13,8 @@ import {
   CircularProgress,
   Chip,
   TextField, // Import TextField
-  InputAdornment // Import InputAdornment
+  InputAdornment, // Import InputAdornment
+  useTheme, // Import useTheme hook
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search'; // Import SearchIcon
 
@@ -28,6 +29,7 @@ interface ProviderKeyLogsProps {
 const ProviderKeyLogs: React.FC<ProviderKeyLogsProps> = ({ logs, loading }) => {
   const { t } = useTranslation();
   const [searchTerm, setSearchTerm] = useState(''); // State for search term
+  const theme = useTheme(); // Lấy theme hiện tại
 
   // Filter logs based on search term (case-insensitive search in description)
   const filteredLogs = useMemo(() => {
@@ -81,9 +83,21 @@ const ProviderKeyLogs: React.FC<ProviderKeyLogsProps> = ({ logs, loading }) => {
           <Table size="small" stickyHeader> {/* Add stickyHeader */}
             <TableHead>
               <TableRow>
-                <TableCell sx={{ backgroundColor: '#ffffff' }}>{t('providerLogs.action', 'Action')}</TableCell>
-                <TableCell sx={{ backgroundColor: '#ffffff' }}>{t('providerLogs.description', 'Description')}</TableCell>
-                <TableCell sx={{ backgroundColor: '#ffffff' }}>{t('providerLogs.time', 'Time')}</TableCell>
+                <TableCell sx={{ 
+                  backgroundColor: theme.palette.mode === 'dark' 
+                    ? theme.palette.background.paper 
+                    : '#ffffff' 
+                }}>{t('providerLogs.action', 'Action')}</TableCell>
+                <TableCell sx={{ 
+                  backgroundColor: theme.palette.mode === 'dark' 
+                    ? theme.palette.background.paper 
+                    : '#ffffff' 
+                }}>{t('providerLogs.description', 'Description')}</TableCell>
+                <TableCell sx={{ 
+                  backgroundColor: theme.palette.mode === 'dark' 
+                    ? theme.palette.background.paper 
+                    : '#ffffff' 
+                }}>{t('providerLogs.time', 'Time')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
