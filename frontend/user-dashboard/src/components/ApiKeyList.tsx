@@ -6,9 +6,8 @@ import {
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Typography, Box, CircularProgress, Alert, IconButton, Tooltip,
     Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField, Button // Added Dialog components
 } from '@mui/material'; // Import MUI components
-import DeleteIcon from '@mui/icons-material/Delete';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline'; // Activate icon
 import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline'; // Deactivate icon
 
@@ -39,6 +38,11 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
     const [confirmDeleteDialogOpen, setConfirmDeleteDialogOpen] = useState(false);
     const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
     const [deleteConfirmationInput, setDeleteConfirmationInput] = useState('');
+    
+    // Dialog states for deactivate/activate confirmation
+    const [deactivateDialogOpen, setDeactivateDialogOpen] = useState(false);
+    const [activateDialogOpen, setActivateDialogOpen] = useState(false);
+    const [keyToToggle, setKeyToToggle] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchApiKeys = async () => {
@@ -108,11 +112,20 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
     // Add refreshTrigger to dependency array
     }, [session, onListChange, refreshTrigger]); // Re-fetch if session, list changes, or refreshTrigger changes
 
-    const handleDeactivate = async (keyPrefix: string) => {
-        if (!confirm(`Are you sure you want to deactivate the key starting with hp_${keyPrefix}?`)) {
-            return;
-        }
+    // Function to open deactivate confirmation dialog
+    const openDeactivateDialog = (keyPrefix: string) => {
+        setKeyToToggle(keyPrefix);
+        setDeactivateDialogOpen(true);
+    };
 
+    // Function to open activate confirmation dialog
+    const openActivateDialog = (keyPrefix: string) => {
+        setKeyToToggle(keyPrefix);
+        setActivateDialogOpen(true);
+    };
+
+    const handleDeactivate = async (keyPrefix: string) => {
+        setDeactivateDialogOpen(false);
         setDeactivating(keyPrefix); // Set loading state for this specific key
         setError(null);
 
@@ -156,14 +169,12 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             toast.error(errorMessage || 'An unexpected error occurred during deactivation.');
         } finally {
             setDeactivating(null); // Clear loading state for this key
+            setKeyToToggle(null);
         }
     };
 
     const handleActivate = async (keyPrefix: string) => {
-        if (!confirm(`Are you sure you want to activate the key starting with hp_${keyPrefix}?`)) {
-            return;
-        }
-
+        setActivateDialogOpen(false);
         setActivating(keyPrefix); // Set loading state for this specific key
         setError(null);
 
@@ -212,6 +223,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             toast.error(errorMessage || 'An unexpected error occurred during activation.');
         } finally {
             setActivating(null); // Clear loading state for this key
+            setKeyToToggle(null);
         }
     };
 
@@ -356,7 +368,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                                                         <span>
                                                             <IconButton
                                                                 size="small"
-                                                                onClick={() => handleDeactivate(key.key_prefix)}
+                                                                onClick={() => openDeactivateDialog(key.key_prefix)} // Use dialog to confirm deactivation
                                                                 disabled={deactivating === key.key_prefix || activating === key.key_prefix || deleting === key.key_prefix}
                                                                 color="warning"
                                                             >
@@ -369,7 +381,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                                                         <span>
                                                             <IconButton
                                                                 size="small"
-                                                                onClick={() => handleActivate(key.key_prefix)}
+                                                                onClick={() => openActivateDialog(key.key_prefix)} // Use dialog to confirm activation
                                                                 disabled={activating === key.key_prefix || deactivating === key.key_prefix || deleting === key.key_prefix}
                                                                 color="success"
                                                             >
@@ -387,7 +399,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                                                         color="error"
                                                         sx={{ ml: 1 }}
                                                     >
-                                                        {deleting === key.key_prefix ? <CircularProgress size={20} color="inherit" /> : <DeleteIcon fontSize="small" />}
+                                                        {deleting === key.key_prefix ? <CircularProgress size={20} color="inherit" /> : <CancelIcon fontSize="small" />}
                                                     </IconButton>
                                                 </Tooltip>
                                             </TableCell>
@@ -413,38 +425,74 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                 </TableContainer>
             )}
 
-            {/* Confirmation Dialog (Moved inside the main Box) */}
+            {/* Confirmation Dialog for Deletion */}
             <Dialog open={confirmDeleteDialogOpen} onClose={handleCloseDeleteConfirmationDialog}>
-                <DialogTitle sx={{ color: 'error.main', fontWeight: 'bold' }}>DANGER ZONE!</DialogTitle>
+                <DialogTitle>Confirm Permanent Deletion</DialogTitle>
                 <DialogContent>
                     <DialogContentText>
-                        This action is irreversible. To confirm permanent deletion of the key starting with{' '}
-                        <strong>{`hp_${keyToDelete}`}</strong>, please type "DELETE" below:
+                        Are you sure you want to permanently delete the key starting with hp_{keyToDelete}?
+                        This action is irreversible. Type DELETE to confirm.
                     </DialogContentText>
                     <TextField
                         autoFocus
                         margin="dense"
-                        id="delete-confirm"
-                        label='Type "DELETE" to confirm'
+                        label="Type DELETE to confirm"
                         type="text"
                         fullWidth
-                        variant="outlined"
                         value={deleteConfirmationInput}
                         onChange={(e) => setDeleteConfirmationInput(e.target.value)}
-                        error={deleteConfirmationInput !== '' && deleteConfirmationInput !== 'DELETE'} // Show error if typed but incorrect
-                        helperText={deleteConfirmationInput !== '' && deleteConfirmationInput !== 'DELETE' ? 'Incorrect text' : ''}
-                        sx={{ mt: 2 }}
+                        error={deleteConfirmationInput !== '' && deleteConfirmationInput !== 'DELETE'}
+                        helperText={deleteConfirmationInput !== '' && deleteConfirmationInput !== 'DELETE' ? 'Please type DELETE exactly as shown' : ''}
                     />
                 </DialogContent>
-                <DialogActions sx={{ pb: 2, px: 3 }}>
+                <DialogActions>
                     <Button onClick={handleCloseDeleteConfirmationDialog}>Cancel</Button>
-                    <Button
-                        onClick={handleConfirmDeletion}
+                    <Button 
+                        onClick={handleConfirmDeletion} 
                         color="error"
-                        variant="contained"
-                        disabled={deleteConfirmationInput !== 'DELETE'} // Disable if not typed correctly
+                        disabled={deleteConfirmationInput !== 'DELETE'}
                     >
-                        Confirm Permanent Deletion
+                        Delete Permanently
+                    </Button>
+                </DialogActions>
+            </Dialog>
+            
+            {/* Deactivate confirmation dialog */}
+            <Dialog open={deactivateDialogOpen} onClose={() => setDeactivateDialogOpen(false)}>
+                <DialogTitle>Confirm Deactivation</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        Are you sure you want to deactivate the key starting with hp_{keyToToggle}?
+                        This will make the key unusable until reactivated.
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setDeactivateDialogOpen(false)}>Cancel</Button>
+                    <Button 
+                        onClick={() => keyToToggle && handleDeactivate(keyToToggle)} 
+                        color="warning"
+                    >
+                        Deactivate
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Activate confirmation dialog */}
+            <Dialog open={activateDialogOpen} onClose={() => setActivateDialogOpen(false)}>
+                <DialogTitle>Confirm Activation</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        Are you sure you want to activate the key starting with hp_{keyToToggle}?
+                        This will make the key usable for API requests.
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setActivateDialogOpen(false)}>Cancel</Button>
+                    <Button 
+                        onClick={() => keyToToggle && handleActivate(keyToToggle)} 
+                        color="success"
+                    >
+                        Activate
                     </Button>
                 </DialogActions>
             </Dialog>

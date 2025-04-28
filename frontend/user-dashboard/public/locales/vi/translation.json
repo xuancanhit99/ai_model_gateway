@@ -1,5 +1,5 @@
 {
-  "appTitle": "AI Gateway",
+  "appTitle": "Hyper AI Gateway",
   "loading": "Đang tải...",
   "authError": "Lỗi: Supabase client chưa được khởi tạo.",
   "toggleDrawer": "Toggle drawer",
@@ -18,6 +18,10 @@
     "switchToVietnamese": "Chuyển sang tiếng Việt",
     "switchToEnglish": "Chuyển sang tiếng Anh",
     "changeLanguage": "Đổi ngôn ngữ"
+  },
+  "action": {
+    "cancel": "Hủy",
+    "delete": "Xóa"
   },
   "gatewayView": {
     "description": "Quản lý API Key để truy cập AI Model Gateway."
@@ -57,24 +61,37 @@
      "fetchError": "Lỗi khi lấy danh sách Provider Keys:",
      "updateSelectionError": "Lỗi khi cập nhật lựa chọn:",
      "deleteError": "Lỗi khi xóa key:",
+     "deleteAllError": "Lỗi khi xóa tất cả key:",
      "selectSuccess": "Đã chọn key thành công cho {{provider}}",
      "unselectSuccess": "Đã bỏ chọn key thành công cho {{provider}}",
      "deleteSuccess": "Đã xóa API Key {{provider}} thành công",
+     "deleteAllSuccess": "Đã xóa tất cả key cho {{provider}} thành công",
      "deleteConfirm": "Bạn có chắc chắn muốn xóa API Key {{provider}} này không?",
+     "deleteAllConfirm": "Bạn có chắc chắn muốn xóa tất cả {{count}} key cho {{provider}} không?",
      "deleteButton": "Xóa",
+     "deleteAllButton": "Xóa tất cả",
+     "hasDefault": "Đã chọn mặc định",
      "headerProvider": "Provider",
      "headerDescription": "Mô tả",
      "headerCreated": "Ngày tạo",
      "headerDefault": "Mặc định",
      "headerActions": "Hành động",
-     "noDescription": "Không có mô tả"
+     "noDescription": "Không có mô tả",
+     "searchProvider": "Tìm kiếm keys...",
+     "deleteConfirmTitle": "Xác nhận xóa",
+     "deleteConfirmMessage": "Bạn có chắc chắn muốn xóa API Key {{provider}} này không?",
+     "deleteAllConfirmTitle": "Xác nhận xóa tất cả",
+     "deleteAllConfirmMessage": "Bạn có chắc chắn muốn xóa tất cả key cho {{provider}} không?"
   },
   "providerLogs": {
     "title": "Nhật ký hoạt động",
     "noLogs": "Chưa có nhật ký hoạt động nào.",
     "action": "Hành động",
     "provider": "Nhà cung cấp",
+    "description": "Mô tả",
     "time": "Thời gian",
+    "search": "Tìm kiếm nhật ký theo hành động, nhà cung cấp, mô tả hoặc thời gian...",
+    "noSearchResults": "Không có nhật ký nào khớp với tìm kiếm của bạn.",
     "actions": {
       "add": "Đã thêm",
       "delete": "Đã xóa",

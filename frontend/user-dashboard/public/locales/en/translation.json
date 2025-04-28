@@ -1,5 +1,5 @@
 {
-  "appTitle": "AI Gateway",
+  "appTitle": "Hyper AI Gateway",
   "loading": "Loading...",
   "authError": "Error: Supabase client not initialized.",
   "toggleDrawer": "Toggle drawer",
@@ -18,6 +18,10 @@
     "switchToVietnamese": "Switch to Vietnamese",
     "switchToEnglish": "Switch to English",
     "changeLanguage": "Change Language"
+  },
+  "action": {
+    "cancel": "Cancel",
+    "delete": "Delete"
   },
   "gatewayView": {
     "description": "Manage API keys for accessing the AI Model Gateway."
@@ -57,24 +61,37 @@
      "fetchError": "Error fetching provider keys:",
      "updateSelectionError": "Error updating selection:",
      "deleteError": "Error deleting key:",
+     "deleteAllError": "Error deleting all keys:",
      "selectSuccess": "Successfully selected key for {{provider}}",
      "unselectSuccess": "Successfully unselected key for {{provider}}",
      "deleteSuccess": "Successfully deleted {{provider}} API key",
+     "deleteAllSuccess": "Successfully deleted all keys for {{provider}}",
      "deleteConfirm": "Are you sure you want to delete this {{provider}} API key?",
+     "deleteAllConfirm": "Are you sure you want to delete all {{count}} keys for {{provider}}?",
      "deleteButton": "Delete",
+     "deleteAllButton": "Delete All Keys",
+     "hasDefault": "Has Default",
      "headerProvider": "Provider",
      "headerDescription": "Description",
      "headerCreated": "Created",
      "headerDefault": "Default",
      "headerActions": "Actions",
-     "noDescription": "No description"
+     "noDescription": "No description",
+     "searchProvider": "Search keys...",
+     "deleteConfirmTitle": "Confirm Deletion",
+     "deleteConfirmMessage": "Are you sure you want to delete this {{provider}} API key?",
+     "deleteAllConfirmTitle": "Confirm Delete All",
+     "deleteAllConfirmMessage": "Are you sure you want to delete all keys for {{provider}}?"
   },
   "providerLogs": {
     "title": "Activity Log",
     "noLogs": "No activity logs available.",
     "action": "Action",
     "provider": "Provider",
+    "description": "Description",
     "time": "Time",
+    "search": "Search logs by action, provider, description or time...",
+    "noSearchResults": "No logs matching your search.",
     "actions": {
       "add": "Added",
       "delete": "Deleted",

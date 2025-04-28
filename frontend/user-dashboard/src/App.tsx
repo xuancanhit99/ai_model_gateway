@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useTranslation } from 'react-i18next'; // Import useTranslation
-import { Toaster } from 'react-hot-toast'; // Import Toaster
+import { useTranslation } from 'react-i18next';
+import { Toaster } from 'react-hot-toast';
 import { supabase } from './supabaseClient';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
@@ -9,18 +9,18 @@ import ApiKeyList from './components/ApiKeyList';
 import ApiKeyCreateForm from './components/ApiKeyCreateForm';
 import ProviderKeyManager from './components/ProviderKeyManager';
 import {
-  Box, ThemeProvider, CssBaseline, PaletteMode, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useMediaQuery, Container, Paper, Alert, Avatar, Tooltip, Menu, MenuItem // Removed unused: Tabs, Tab, AppBar, useTheme, Button
-} from '@mui/material'; // Import layout components
-import MenuIcon from '@mui/icons-material/Menu'; // Import Menu icon
-// import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'; // Removed unused import
-import LogoutIcon from '@mui/icons-material/Logout'; // Import Logout icon
-import Brightness4Icon from '@mui/icons-material/Brightness4'; // Dark mode icon
-import Brightness7Icon from '@mui/icons-material/Brightness7'; // Light mode icon
-import TranslateIcon from '@mui/icons-material/Translate'; // Language icon
-import KeyIcon from '@mui/icons-material/Key'; // Example icon
-import VpnKeyIcon from '@mui/icons-material/VpnKey'; // Example icon
+  Box, ThemeProvider, CssBaseline, PaletteMode, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useMediaQuery, Container, Paper, Alert, Avatar, Tooltip, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button
+} from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
+import LogoutIcon from '@mui/icons-material/Logout';
+import Brightness4Icon from '@mui/icons-material/Brightness4';
+import Brightness7Icon from '@mui/icons-material/Brightness7';
+import TranslateIcon from '@mui/icons-material/Translate';
+import KeyIcon from '@mui/icons-material/Key';
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import { getAppTheme } from './theme';
-import ErrorBoundary from './components/ErrorBoundary'; // Import ErrorBoundary
+import ErrorBoundary from './components/ErrorBoundary';
+import HyperLogo from './assets/Hyper.svg'; // Import Hyper logo
 import './App.css';
 
 // Kiểu dữ liệu cho theme (sử dụng PaletteMode từ MUI)
@@ -42,14 +42,11 @@ function App() {
   const muiTheme = getAppTheme(themeMode);
   const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
   const [drawerOpen, setDrawerOpen] = useState(!isMobile);
-  const [activeView, setActiveView] = useState<'gateway' | 'provider'>('gateway');
+  const [activeView, setActiveView] = useState<'gateway' | 'provider'>('provider'); // Đổi từ 'gateway' thành 'provider'
   const [refreshGatewayCounter, setRefreshGatewayCounter] = useState(0); // State to refresh gateway list
   const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null); // State for language menu anchor
-  // const [language, setLanguage] = useState<'en' | 'vi'>(() => { // No longer needed, i18next handles this
-  //  const storedLang = localStorage.getItem('app-language');
-  //  // Default to English if no valid language is stored or if it's not 'en' or 'vi'
-  //  return (storedLang === 'en' || storedLang === 'vi') ? storedLang : 'en';
-  // }); // State for language
+  // Thêm state mới cho dialog đăng xuất
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
 
   // Callback for Gateway key creation
   const handleGatewayKeyCreated = useCallback(() => {
@@ -131,6 +128,21 @@ function App() {
   };
   // --- End Language Menu Handlers ---
 
+  // --- Logout Dialog Handlers ---
+  const handleLogoutDialogOpen = () => {
+    setLogoutDialogOpen(true);
+  };
+
+  const handleLogoutDialogClose = () => {
+    setLogoutDialogOpen(false);
+  };
+
+  const handleLogout = () => {
+    supabase?.auth.signOut();
+    setLogoutDialogOpen(false);
+  };
+  // --- End Logout Dialog Handlers ---
+
   // Function to toggle language using i18next - Replaced by menu
   // const toggleLanguage = () => {
   //   const newLang = i18n.language === 'en' ? 'vi' : 'en';
@@ -156,12 +168,15 @@ function App() {
       {!session ? (
         // --- Auth View (No Drawer) ---
         supabase ? (
-          <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', p: 2 }}> {/* Added flexDirection and padding */}
-             {/* Add Header for Login Page */}
-             <Typography variant="h4" component="h1" gutterBottom color="primary" sx={{ mb: 4 }}> {/* Added margin bottom */}
-                {t('appTitle')} {/* Use translation */}
-             </Typography>
-            <Box sx={{ maxWidth: '400px', width: '100%' }}> {/* Removed padding here, added to parent */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', p: 2 }}>
+             {/* Add Logo and Header for Login Page */}
+             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
+                <img src={HyperLogo} alt="Hyper Logo" style={{ height: '80px', marginBottom: '16px' }} />
+                <Typography variant="h4" component="h1" gutterBottom color="primary">
+                  {t('appTitle')}
+                </Typography>
+             </Box>
+            <Box sx={{ maxWidth: '400px', width: '100%' }}>
               <Auth
                 supabaseClient={supabase}
                 appearance={{ theme: ThemeSupa }}
@@ -209,56 +224,74 @@ function App() {
                   width: drawerWidth,
                   boxSizing: 'border-box',
                   borderRight: 'none', // Remove border to match Figma
-                  backgroundColor: themeMode === 'light' ? muiTheme.palette.primary.light : muiTheme.palette.background.paper, // Use Primary Light for light mode sidebar
+                  backgroundColor: themeMode === 'light' ? 'info.dark' : muiTheme.palette.background.paper, // Đổi từ primary.light sang info.dark cho chế độ sáng
+                  color: themeMode === 'light' ? 'common.white' : 'inherit', // Text màu trắng trong light mode
                 },
               }}
             >
               {/* Drawer Header */}
-              <Toolbar sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 1 }}>
-                <Typography variant="h6" noWrap component="div" color="primary">
-                  {t('appTitle')} {/* Use translation */}
+              <Toolbar sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', mb: 1, pt: 2 }}>
+                <img src={HyperLogo} alt="Hyper Logo" style={{ height: '50px', marginBottom: '12px' }} />
+                <Typography 
+                  variant="h6" 
+                  noWrap 
+                  component="div" 
+                  color={themeMode === 'light' ? 'common.white' : 'primary'}
+                  sx={{ fontWeight: 'bold' }}
+                >
+                  {t('appTitle')}
                 </Typography>
               </Toolbar>
-              <Divider />
+              <Divider sx={{ 
+                borderColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.2)' : undefined 
+              }} />
 
               {/* Navigation List */}
               <List sx={{ px: 1 }}>
-                <ListItem key="Gateway Keys" disablePadding sx={{ display: 'block', my: 0.5 }}>
-                  <ListItemButton
-                    selected={activeView === 'gateway'}
-                    onClick={() => { setActiveView('gateway'); handleDrawerClose(); }}
-                    sx={{
-                      borderRadius: '24px',
-                      '&.Mui-selected': {
-                        backgroundColor: muiTheme.palette.action.selected,
-                        '&:hover': {
-                          backgroundColor: muiTheme.palette.action.hover,
-                        },
-                      },
-                      py: 1,
-                    }}
-                  >
-                    <ListItemIcon sx={{ minWidth: '40px' }}><KeyIcon color={activeView === 'gateway' ? 'primary' : 'inherit'} /></ListItemIcon>
-                    <ListItemText primary={t('menu.gatewayKeys')} />
-                  </ListItemButton>
-                </ListItem>
                 <ListItem key="Provider Keys" disablePadding sx={{ display: 'block', my: 0.5 }}>
                   <ListItemButton
                     selected={activeView === 'provider'}
                     onClick={() => { setActiveView('provider'); handleDrawerClose(); }}
                     sx={{
                       borderRadius: '24px',
+                      color: themeMode === 'light' ? 'white' : undefined,
                       '&.Mui-selected': {
-                        backgroundColor: muiTheme.palette.action.selected,
+                        backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.15)' : muiTheme.palette.action.selected,
                         '&:hover': {
-                          backgroundColor: muiTheme.palette.action.hover,
+                          backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.25)' : muiTheme.palette.action.hover,
                         },
+                      },
+                      '&:hover': {
+                        backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.1)' : undefined,
                       },
                       py: 1,
                     }}
                   >
-                    <ListItemIcon sx={{ minWidth: '40px' }}><VpnKeyIcon color={activeView === 'provider' ? 'primary' : 'inherit'} /></ListItemIcon>
+                    <ListItemIcon sx={{ minWidth: '40px', color: themeMode === 'light' ? 'white' : undefined }}><VpnKeyIcon color={activeView === 'provider' && themeMode !== 'light' ? 'primary' : 'inherit'} /></ListItemIcon>
                     <ListItemText primary={t('menu.providerKeys')} />
+                  </ListItemButton>
+                </ListItem>
+                <ListItem key="Gateway Keys" disablePadding sx={{ display: 'block', my: 0.5 }}>
+                  <ListItemButton
+                    selected={activeView === 'gateway'}
+                    onClick={() => { setActiveView('gateway'); handleDrawerClose(); }}
+                    sx={{
+                      borderRadius: '24px',
+                      color: themeMode === 'light' ? 'white' : undefined,
+                      '&.Mui-selected': {
+                        backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.15)' : muiTheme.palette.action.selected,
+                        '&:hover': {
+                          backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.25)' : muiTheme.palette.action.hover,
+                        },
+                      },
+                      '&:hover': {
+                        backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.1)' : undefined,
+                      },
+                      py: 1,
+                    }}
+                  >
+                    <ListItemIcon sx={{ minWidth: '40px', color: themeMode === 'light' ? 'white' : undefined }}><KeyIcon color={activeView === 'gateway' && themeMode !== 'light' ? 'primary' : 'inherit'} /></ListItemIcon>
+                    <ListItemText primary={t('menu.gatewayKeys')} />
                   </ListItemButton>
                 </ListItem>
               </List>
@@ -268,19 +301,31 @@ function App() {
 
               {/* User Info / Logout */}
               <Box sx={{ p: 2 }}>
-                <Divider sx={{ mb: 1 }} />
+                <Divider sx={{ 
+                  mb: 1,
+                  borderColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.2)' : undefined 
+                }} />
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
-                    <Avatar sx={{ width: 32, height: 32, mr: 1, bgcolor: 'primary.main' }}>
+                    <Avatar sx={{ 
+                      width: 32, 
+                      height: 32, 
+                      mr: 1, 
+                      bgcolor: themeMode === 'light' ? 'primary.light' : 'primary.main',
+                      color: themeMode === 'light' ? 'text.primary' : 'white' // Thêm màu tối cho chữ cái
+                    }}>
                       {session.user.email ? session.user.email[0].toUpperCase() : '?'}
                     </Avatar>
-                    <Typography variant="body2" noWrap sx={{ flexShrink: 1 }}>
+                    <Typography variant="body2" noWrap sx={{ flexShrink: 1, color: themeMode === 'light' ? 'white' : undefined }}>
                       {session.user.email}
                     </Typography>
                   </Box>
-                  {/* Removed comment inside Tooltip to fix TS error */}
                   <Tooltip title={t('userInfo.signOut')}>
-                    <IconButton onClick={() => supabase?.auth.signOut()} size="small">
+                    <IconButton 
+                      onClick={handleLogoutDialogOpen} 
+                      size="small" 
+                      sx={{ color: themeMode === 'light' ? 'white' : undefined }}
+                    >
                       <LogoutIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -381,9 +426,8 @@ function App() {
         position="top-right" // Changed position to top-right
         reverseOrder={false}
         toastOptions={{
-          // Define default options (optional)
-          // className: '',
-          // duration: 5000,
+          // Define default options for all toasts
+          duration: 5000, // 5 seconds for all toast types
           // style: {
           //   background: '#363636',
           //   color: '#fff',
@@ -391,7 +435,6 @@ function App() {
 
           // Define options for specific types
           success: {
-            // duration: 3000, // Optional: specific duration for success
             style: {
               background: themeMode === 'light' ? '#27ae60' : '#abebc6', // Green background based on theme
               color: themeMode === 'light' ? '#FFFFFF' : '#1d6f42', // Text color based on theme
@@ -410,6 +453,31 @@ function App() {
           },
         }}
       />
+
+      {/* Logout Confirmation Dialog */}
+      <Dialog
+        open={logoutDialogOpen}
+        onClose={handleLogoutDialogClose}
+        aria-labelledby="logout-dialog-title"
+        aria-describedby="logout-dialog-description"
+      >
+        <DialogTitle id="logout-dialog-title">
+          {t('logout.confirmTitle', 'Xác nhận đăng xuất')}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="logout-dialog-description">
+            {t('logout.confirmMessage', 'Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?')}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleLogoutDialogClose} color="primary">
+            {t('logout.cancel', 'Hủy')}
+          </Button>
+          <Button onClick={handleLogout} color="primary" autoFocus>
+            {t('logout.confirm', 'Đăng xuất')}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </ThemeProvider>
   );
 }
