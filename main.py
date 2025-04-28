@@ -1,7 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import vision, health, chat, openai_compat, manage_keys, manage_provider_keys # Thêm manage_provider_keys
+from app.api.routes import vision, health, chat, openai_compat, manage_keys, manage_provider_keys, activity_logs # Thêm activity_logs
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -47,6 +47,9 @@ app.include_router(manage_keys.router, tags=["API Key Management"]) # Prefix is 
 
 # Provider Key Management routes
 app.include_router(manage_provider_keys.router, tags=["Provider Key Management"]) # Prefix is defined in the router itself
+
+# Activity Log routes
+app.include_router(activity_logs.router, prefix=f"{settings.API_V1_STR}/activity-logs", tags=["Activity Logs"])
 
 @app.get("/")
 async def root():

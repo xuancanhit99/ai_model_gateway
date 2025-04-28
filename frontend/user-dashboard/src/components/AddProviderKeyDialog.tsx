@@ -13,6 +13,13 @@ import {
   CircularProgress
 } from '@mui/material';
 
+// Định nghĩa kiểu dữ liệu cho response từ API tạo key
+interface ProviderKeyApiResponse {
+  id?: string;
+  provider_name?: string;
+  // Thêm các trường khác nếu API trả về
+}
+
 interface AddProviderKeyDialogProps {
   open: boolean;
   providerName: string;
@@ -42,28 +49,47 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
   };
 
   // Hàm ghi nhật ký khi thêm mới Provider Key
-  const addProviderKeyLog = async (responseData: any) => {
+  const addProviderKeyLog = async (action: 'ADD', providerNameLog: string, keyIdLog: string | null, descriptionLog: string) => {
+    // Sử dụng lại logic gọi API log từ ProviderKeyList.tsx
     try {
-      if (!supabase || !responseData.id || !responseData.provider_name) {
-        console.error('Cannot log provider key action: Missing data', responseData);
-        return;
+      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
+
+      // Lấy token xác thực
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        console.error('Authentication token not available for logging.');
+        return; // Không chặn, chỉ log lỗi
       }
-      
-      // Ghi nhật ký vào bảng provider_key_logs
-      const { error } = await supabase
-        .from('provider_key_logs')
-        .insert({
-          action: 'ADD',
-          provider_name: responseData.provider_name,
-          key_id: responseData.id,
-          description: `Added new ${name ? `"${name}" ` : ''}key for ${providerDisplayName}`
-        });
-        
-      if (error) {
-        console.error('Error adding provider key log:', error);
+
+      const logPayload = {
+        action,
+        provider_name: providerNameLog,
+        key_id: keyIdLog,
+        description: descriptionLog
+      };
+
+      // Gọi API backend để ghi log
+      const logResponse = await fetch('/api/v1/activity-logs/', { // Sử dụng đường dẫn tương đối
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(logPayload)
+      });
+
+      if (!logResponse.ok) {
+        // Log lỗi nhưng không làm gián đoạn luồng chính
+        const errorData = await logResponse.json().catch(() => ({ detail: 'Unknown logging error' }));
+        console.error(`Failed to log activity via API (${logResponse.status}): ${errorData.detail}`);
+      } else {
+        console.log("Activity logged successfully via API.");
+        // Không cần fetchProviderKeyLogs() ở đây vì dialog này không hiển thị log trực tiếp
       }
-    } catch (error: any) {
-      console.error('Error in addProviderKeyLog:', error);
+
+    } catch (err: any) {
+      console.error('Error adding activity log via API:', err);
     }
   };
 
@@ -90,10 +116,11 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
       if (!accessToken) {
         throw new Error(t('providerCreateForm.notAuthenticated', 'Not authenticated. Please sign in again.'));
       }
-      
       // Thử gửi yêu cầu qua XMLHttpRequest để xử lý sâu hơn các vấn đề mixed content
-      await new Promise<{id?: string, provider_name?: string}>(async (resolve, reject) => {
+      // Sử dụng kiểu ProviderKeyApiResponse cho Promise
+      await new Promise<ProviderKeyApiResponse>(async (resolve, reject) => {
         const xhr = new XMLHttpRequest();
+        
         
         // Đảm bảo URL là HTTPS bằng cách sử dụng origin hiện tại và thêm dấu / ở cuối
         const apiUrl = `${window.location.origin}/api/v1/provider-keys/`;
@@ -107,22 +134,32 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
         xhr.onload = function() {
           if (xhr.status >= 200 && xhr.status < 300) {
             console.log('XHR Success:', xhr.status, xhr.statusText);
-            
-            // Parse response to get key ID for logging
-            let responseData = {};
+            // Parse response và ép kiểu an toàn
+            let responseData: ProviderKeyApiResponse = {}; // Khởi tạo với kiểu rõ ràng
             try {
-              responseData = JSON.parse(xhr.responseText) || {};
+              const parsed = JSON.parse(xhr.responseText);
+              // Kiểm tra xem parsed có phải object không trước khi gán
+              if (typeof parsed === 'object' && parsed !== null) {
+                 responseData = parsed as ProviderKeyApiResponse;
+              } else {
+                 console.error('Parsed response is not an object:', parsed);
+              }
             } catch (e) {
               console.error('Error parsing response:', e);
+              // responseData vẫn là {} nếu parse lỗi
             }
+            
             
             // Reset form và thông báo thành công
             setApiKey('');
             setName('');
             toast.success(t('providerCreateForm.keyAddedSuccess', 'API key added successfully')); 
             
-            // Ghi nhật ký khi thêm key thành công
-            addProviderKeyLog(responseData);
+            // Ghi nhật ký khi thêm key thành công qua API
+            const keyIdForLog = responseData?.id || null;
+            const providerNameForLog = responseData?.provider_name || providerName; // Fallback nếu response không có
+            const descriptionForLog = `Added new ${name ? `"${name}" ` : ''}key for ${providerDisplayName}`;
+            addProviderKeyLog('ADD', providerNameForLog, keyIdForLog, descriptionForLog);
             
             // Call onSuccess if provided
             if (onSuccess) {

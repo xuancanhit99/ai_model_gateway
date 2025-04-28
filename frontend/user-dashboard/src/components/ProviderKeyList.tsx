@@ -85,16 +85,35 @@ const ProviderKeyList: React.FC = () => {
       setError(null);
       if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      const { data, error: fetchError } = await supabase
-        .from('user_provider_keys')
-        .select('*')
-        .order('provider_name', { ascending: true })
-        .order('created_at', { ascending: false });
+      // Lấy token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error(t('authError', 'Authentication token not available'));
 
-      if (fetchError) throw fetchError;
-      setProviderKeys(data || []);
+      // Gọi API backend để lấy keys
+      const response = await fetch('/api/v1/provider-keys/', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to fetch provider keys'}`);
+      }
+
+      const data = await response.json();
+      // Sắp xếp lại dữ liệu nếu cần (API backend có thể đã sắp xếp)
+      const sortedData = (data || []).sort((a: ProviderKey, b: ProviderKey) => {
+         if (a.provider_name < b.provider_name) return -1;
+         if (a.provider_name > b.provider_name) return 1;
+         // Nếu provider_name giống nhau, sắp xếp theo created_at giảm dần
+         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+      setProviderKeys(sortedData);
+
     } catch (err: any) {
-      console.error('Error fetching provider keys:', err);
+      console.error('Error fetching provider keys via API:', err);
       setError(`${t('providerList.fetchError', 'Error fetching provider keys:')} ${err.message}`);
     } finally {
       setLoading(false);
@@ -106,17 +125,38 @@ const ProviderKeyList: React.FC = () => {
       setLoadingLogs(true);
       if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      const { data, error: fetchError } = await supabase
-        .from('provider_key_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
+      // Lấy token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+         // Không thể fetch log nếu chưa đăng nhập
+         console.warn('Cannot fetch logs: User not authenticated.');
+         setLogs([]); // Xóa log cũ nếu có
+         return;
+      }
 
-      if (fetchError) throw fetchError;
-      setLogs(data || []);
+      // Gọi API backend để lấy logs
+      const response = await fetch('/api/v1/activity-logs/?limit=50', { // Thêm limit vào query
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        // Không throw lỗi để không ảnh hưởng UI chính, chỉ log lỗi
+        console.error(`API Error (${response.status}) fetching logs: ${errorData.detail || 'Failed to fetch activity logs'}`);
+        setLogs([]); // Xóa log cũ nếu fetch lỗi
+        return;
+      }
+
+      const data = await response.json();
+      setLogs(data || []); // API đã sắp xếp sẵn
+
     } catch (err: any) {
-      console.error('Error fetching provider key logs:', err);
+      console.error('Error fetching provider key logs via API:', err);
       // Không hiển thị lỗi log trên UI
+      setLogs([]); // Xóa log cũ nếu có lỗi khác
     } finally {
       setLoadingLogs(false);
     }
@@ -125,21 +165,45 @@ const ProviderKeyList: React.FC = () => {
   // --- Logging ---
   const addProviderKeyLog = async (action: 'ADD' | 'DELETE' | 'SELECT' | 'UNSELECT', providerName: string, keyId: string | null = null, description: string = '') => {
     try {
-      if (!supabase) throw new Error('Supabase client not initialized');
+      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      const { error: insertError } = await supabase
-        .from('provider_key_logs')
-        .insert({
-          action,
-          provider_name: providerName,
-          key_id: keyId,
-          description: description || `${action} key for ${providerDisplayNames[providerName] || providerName}`
-        });
+      // Lấy token xác thực
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        console.error('Authentication token not available for logging.');
+        // Không throw lỗi ở đây để không chặn các hành động khác, chỉ log lỗi
+        return;
+      }
 
-      if (insertError) throw insertError;
-      fetchProviderKeyLogs(); // Refresh logs
+      const logPayload = {
+        action,
+        provider_name: providerName,
+        key_id: keyId,
+        description: description || `${action} key for ${providerDisplayNames[providerName] || providerName}`
+      };
+
+      const response = await fetch('/api/v1/activity-logs/', { // Sử dụng đường dẫn tương đối
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(logPayload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' })); // Bắt lỗi nếu response không phải JSON
+        throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to log activity'}`);
+      }
+
+      // Log thành công, fetch lại logs để cập nhật UI
+      fetchProviderKeyLogs();
+
     } catch (err: any) {
-      console.error('Error adding log:', err);
+      console.error('Error adding activity log via API:', err);
+      // Có thể hiển thị thông báo lỗi nhẹ nhàng cho người dùng nếu cần
+      // toast.error(t('providerList.logError', 'Could not record activity: {{message}}', { message: err.message }));
     }
   };
 
@@ -153,34 +217,53 @@ const ProviderKeyList: React.FC = () => {
     try {
       if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      let newIsSelectedValue = !currentIsSelected;
-      let successMsg = '';
-      let logAction: 'SELECT' | 'UNSELECT' = newIsSelectedValue ? 'SELECT' : 'UNSELECT';
+      const newIsSelectedValue = !currentIsSelected;
+      const logAction: 'SELECT' | 'UNSELECT' = newIsSelectedValue ? 'SELECT' : 'UNSELECT';
 
-      const { data: keyData } = await supabase.from('user_provider_keys').select('name').eq('id', keyId).single();
+      // Lấy token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error(t('authError', 'Authentication token not available'));
 
-      if (newIsSelectedValue) {
-        await supabase.from('user_provider_keys').update({ is_selected: false }).eq('provider_name', providerName);
-        successMsg = t('providerList.selectSuccess', { provider: providerDisplayNames[providerName] || providerName });
-      } else {
-        successMsg = t('providerList.unselectSuccess', { provider: providerDisplayNames[providerName] || providerName });
+      // Gọi API backend để cập nhật (PATCH)
+      const response = await fetch(`/api/v1/provider-keys/${keyId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ is_selected: newIsSelectedValue })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to update selection'}`);
       }
 
-      const { error: updateError } = await supabase.from('user_provider_keys').update({ is_selected: newIsSelectedValue }).eq('id', keyId);
-      if (updateError) throw updateError;
+      const updatedKeyData = await response.json(); // Lấy dữ liệu key đã cập nhật (bao gồm cả name)
 
+      // Thông báo thành công
+      const successMsg = newIsSelectedValue
+        ? t('providerList.selectSuccess', { provider: providerDisplayNames[providerName] || providerName })
+        : t('providerList.unselectSuccess', { provider: providerDisplayNames[providerName] || providerName });
       toast.success(successMsg);
+
+      // Ghi log qua API
+      const keyName = updatedKeyData?.name; // Lấy name từ response API
       await addProviderKeyLog(
         logAction,
         providerName,
         keyId,
         logAction === 'SELECT' ?
-          `Selected ${keyData?.name ? `"${keyData.name}"` : ''} as default key for ${providerDisplayNames[providerName] || providerName}` :
-          `Unselected ${keyData?.name ? `"${keyData.name}"` : ''} as default key for ${providerDisplayNames[providerName] || providerName}`
+          `Selected ${keyName ? `"${keyName}"` : ''} as default key for ${providerDisplayNames[providerName] || providerName}` :
+          `Unselected ${keyName ? `"${keyName}"` : ''} as default key for ${providerDisplayNames[providerName] || providerName}`
       );
+
+      // Fetch lại danh sách keys
       fetchProviderKeys();
+
     } catch (err: any) {
-      console.error('Error updating provider key selection:', err);
+      console.error('Error updating provider key selection via API:', err);
       toast.error(t('providerList.updateSelectionError', 'Error updating selection: {{message}}', { message: err.message }));
     }
   };
@@ -192,24 +275,50 @@ const ProviderKeyList: React.FC = () => {
 
   const handleDeleteKeyConfirm = async () => {
     if (!keyToDelete) return;
-    const {id, providerName} = keyToDelete;
+    const { id, providerName } = keyToDelete;
+    // Lấy name trước khi xóa để ghi log (cần fetch trước hoặc lấy từ state nếu có)
+    const keyData = providerKeys.find(k => k.id === id); // Lấy từ state hiện tại
+    const keyNameForLog = keyData?.name;
+
     try {
       if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      const { data: keyData } = await supabase.from('user_provider_keys').select('name, is_selected').eq('id', id).single();
-      const { error: deleteError } = await supabase.from('user_provider_keys').delete().eq('id', id);
-      if (deleteError) throw deleteError;
+      // Lấy token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error(t('authError', 'Authentication token not available'));
 
+      // Gọi API backend để xóa (DELETE)
+      const response = await fetch(`/api/v1/provider-keys/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      // Check status 204 No Content for successful deletion
+      if (response.status !== 204) {
+         // Nếu không phải 204, cố gắng đọc lỗi
+         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+         throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to delete key'}`);
+      }
+
+      // Thông báo thành công
       toast.success(t('providerList.deleteSuccess', { provider: providerDisplayNames[providerName] || providerName }));
+
+      // Ghi log qua API
       await addProviderKeyLog(
         'DELETE',
         providerName,
         id,
-        `Deleted key ${keyData?.name ? `"${keyData.name}"` : ''} for ${providerDisplayNames[providerName] || providerName}`
+        `Deleted key ${keyNameForLog ? `"${keyNameForLog}"` : ''} for ${providerDisplayNames[providerName] || providerName}`
       );
+
+      // Fetch lại danh sách keys
       fetchProviderKeys();
+
     } catch (err: any) {
-      console.error('Error deleting provider key:', err);
+      console.error('Error deleting provider key via API:', err);
       toast.error(t('providerList.deleteError', 'Error deleting key: {{message}}', { message: err.message }));
     } finally {
       setDeleteDialogOpen(false);
@@ -228,19 +337,41 @@ const ProviderKeyList: React.FC = () => {
     try {
       if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      const { error: deleteError } = await supabase.from('user_provider_keys').delete().eq('provider_name', providerName);
-      if (deleteError) throw deleteError;
+      // Lấy token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error(t('authError', 'Authentication token not available'));
 
+      // Gọi API backend để xóa tất cả theo provider (DELETE với query param)
+      const response = await fetch(`/api/v1/provider-keys/?provider_name=${encodeURIComponent(providerName)}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      // Check status 204 No Content for successful deletion
+      if (response.status !== 204) {
+         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+         throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to delete keys'}`);
+      }
+
+      // Thông báo thành công
       toast.success(t('providerList.deleteAllSuccess', { provider: providerDisplayNames[providerName] || providerName }));
+
+      // Ghi log qua API
       await addProviderKeyLog(
         'DELETE',
         providerName,
-        null,
+        null, // keyId là null khi xóa tất cả
         `Deleted all keys for ${providerDisplayNames[providerName] || providerName}`
       );
+
+      // Fetch lại danh sách keys
       fetchProviderKeys();
+
     } catch (err: any) {
-      console.error(`Error deleting all keys for ${providerName}:`, err);
+      console.error(`Error deleting all keys for ${providerName} via API:`, err);
       toast.error(t('providerList.deleteAllError', 'Error deleting keys: {{message}}', { message: err.message }));
     } finally {
       setDeleteAllDialogOpen(false);

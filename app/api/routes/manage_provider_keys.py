@@ -85,7 +85,8 @@ def decrypt_api_key(encrypted_key: str) -> str:
 
 # --- CRUD Endpoints ---
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=ProviderKeyInfo)
-async def create_provider_key(
+# Chuyển thành hàm đồng bộ (def)
+def create_provider_key(
     key_data: ProviderKeyCreate,
     user_id: str = Depends(get_current_user),
     supabase: Client = Depends(get_supabase_client)
@@ -273,4 +274,42 @@ async def delete_provider_key(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete provider key"
+        )
+
+@router.delete("/", status_code=status.HTTP_204_NO_CONTENT)
+def delete_all_provider_keys_for_provider(
+    provider_name: str, # Lấy từ query parameter
+    user_id: str = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase_client)
+):
+    """Delete all provider keys for a specific provider for the authenticated user"""
+    try:
+        # Validate provider name (optional but good practice)
+        valid_providers = ['google', 'xai', 'gigachat', 'perplexity']
+        if provider_name not in valid_providers:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid provider name specified for deletion."
+            )
+
+        # Delete all keys for the specified provider and user
+        # Không cần check trước vì delete sẽ không làm gì nếu không có bản ghi khớp
+        supabase.table("user_provider_keys").delete().eq(
+            "user_id", user_id
+        ).eq(
+            "provider_name", provider_name
+        ).execute()
+
+        # Log action (optional, can be done via the activity log endpoint from frontend)
+        logger.info(f"Deleted all keys for provider '{provider_name}' for user {user_id}")
+
+        return None # Return None for 204 No Content
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error deleting all keys for provider {provider_name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete keys for provider {provider_name}"
         )
