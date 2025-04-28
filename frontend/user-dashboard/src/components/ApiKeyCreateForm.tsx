@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
-// Session type might not be needed here anymore if not used
-// import type { Session } from '@supabase/supabase-js';
+import {
+    TextField, Button, Box, Typography, CircularProgress, Alert, IconButton, InputAdornment, Snackbar, Tooltip // Import Tooltip
+} from '@mui/material'; // Import MUI components
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'; // Import copy icon
 
 interface ApiKeyCreateFormProps {
     // session: Session; // Removed unused session prop
@@ -12,7 +14,8 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
     const [name, setName] = useState<string>('');
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const [newKey, setNewKey] = useState<string | null>(null); // Để hiển thị key mới tạo
+    const [newKey, setNewKey] = useState<string | null>(null);
+    const [snackbarOpen, setSnackbarOpen] = useState(false); // State for Snackbar visibility
 
     const handleCreateKey = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault(); // Ngăn chặn gửi form mặc định
@@ -58,7 +61,9 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
 
         } catch (err: any) {
             console.error("Error creating API key:", err);
-            setError(err.message || 'An unexpected error occurred.');
+            // Ensure error message is always a string before setting state
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            setError(errorMessage || 'An unexpected error occurred.');
         } finally {
             setLoading(false);
         }
@@ -68,51 +73,109 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
         if (newKey) {
             navigator.clipboard.writeText(newKey)
                 .then(() => {
-                    alert('API Key copied to clipboard!');
-                    setNewKey(null); // <-- Thêm dòng này để ẩn ô hiển thị key
+                    setSnackbarOpen(true); // Show Snackbar on success
+                    // Keep the key visible for a bit or hide immediately based on UX preference
+                    // setNewKey(null); // Optional: Hide the key after copying
                 })
                 .catch(err => {
                     console.error('Failed to copy key: ', err);
-                    // Optionally keep the key visible if copy fails
-                    alert('Failed to copy key. Please copy it manually.');
+                    // Show error in UI instead of alert
+                    setError('Failed to copy key automatically. Please copy it manually.');
                 });
         }
     };
 
-    return (
-        <div>
-            <h4>Create New API Key</h4>
-            <form onSubmit={handleCreateKey}>
-                <div>
-                    <label htmlFor="keyName">Key Name (Optional): </label>
-                    <input
-                        id="keyName"
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="e.g., My Test Key"
-                        disabled={loading}
-                    />
-                </div>
-                <button type="submit" disabled={loading}>
-                    {loading ? 'Creating...' : 'Create Key'}
-                </button>
-            </form>
+    const handleSnackbarClose = (event?: React.SyntheticEvent | Event, reason?: string) => {
+        if (reason === 'clickaway') {
+            return;
+        }
+        setSnackbarOpen(false);
+    };
 
-            {error && <p style={{ color: 'var(--color-error)' }}>Error: {error}</p>} {/* Use CSS var */}
+    return (
+        <Box component="div" sx={{ mt: 3 }}> {/* Use Box as container */}
+            <Typography variant="h6" component="h4" gutterBottom>
+                Create New API Key
+            </Typography>
+            <Box component="form" onSubmit={handleCreateKey} noValidate sx={{ mt: 1 }}>
+                <TextField
+                    margin="normal"
+                    fullWidth
+                    id="keyName"
+                    label="Key Name (Optional)"
+                    name="keyName"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g., My Test Key"
+                    disabled={loading}
+                    variant="outlined" // Use outlined variant
+                />
+                <Button
+                    type="submit"
+                    variant="contained" // Use contained style
+                    disabled={loading}
+                    sx={{ mt: 2, mb: 2 }} // Add margin
+                    startIcon={loading ? <CircularProgress size={20} color="inherit" /> : null} // Show spinner inside button
+                >
+                    {loading ? 'Creating...' : 'Create Key'}
+                </Button>
+            </Box>
+
+            {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
 
             {newKey && (
-                <div className="success-message"> {/* Use CSS class */}
-                    <p><strong>API Key Created Successfully!</strong></p>
-                    <p>Please copy your new API key. You won't be able to see it again.</p>
-                    {/* Inline style removed from pre, handled by index.css */}
-                    <pre>
-                        <code>{newKey}</code>
-                    </pre>
-                    <button onClick={copyToClipboard}>Copy Key</button> {/* Removed inline margin */}
-                </div>
+                <Alert severity="success" sx={{ mt: 3, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                    <Typography variant="subtitle1" gutterBottom>
+                        <strong>API Key Created Successfully!</strong>
+                    </Typography>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                        Please copy your new API key. You won't be able to see it again.
+                    </Typography>
+                    <TextField
+                        fullWidth
+                        // readOnly prop removed, use InputProps instead
+                        value={newKey}
+                        variant="outlined"
+                        size="small"
+                        sx={{
+                            mb: 1,
+                            '& .MuiInputBase-input': {
+                                fontFamily: 'monospace',
+                                fontSize: '0.9rem',
+                            },
+                        }}
+                        InputProps={{
+                            readOnly: true, // Set readOnly via InputProps
+                            endAdornment: (
+                                <InputAdornment position="end">
+                                    <Tooltip title="Copy API Key">
+                                        <IconButton
+                                            aria-label="copy api key"
+                                            onClick={copyToClipboard}
+                                            edge="end"
+                                        >
+                                            <ContentCopyIcon fontSize='small'/>
+                                        </IconButton>
+                                    </Tooltip>
+                                </InputAdornment>
+                            ),
+                        }}
+                    />
+                     {/* Optional: Add a button to explicitly close/hide the key */}
+                     <Button size="small" onClick={() => setNewKey(null)} sx={{ alignSelf: 'flex-end' }}>
+                         Close
+                     </Button>
+                </Alert>
             )}
-        </div>
+             {/* Snackbar for copy confirmation */}
+             <Snackbar
+                open={snackbarOpen}
+                autoHideDuration={3000} // Hide after 3 seconds
+                onClose={handleSnackbarClose}
+                message="API Key copied to clipboard!"
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+            />
+        </Box>
     );
 };
 

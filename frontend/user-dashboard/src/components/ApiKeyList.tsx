@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient'; // Import Supabase client for auth token
+import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
+import {
+    Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Button, Chip, Typography, Box, CircularProgress, Alert, IconButton, Tooltip
+} from '@mui/material'; // Import MUI components
+import DeleteIcon from '@mui/icons-material/Delete';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline'; // Activate icon
+import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline'; // Deactivate icon
 
 // Định nghĩa kiểu dữ liệu cho một API key (lấy từ schemas.py backend)
 interface ApiKeyInfo {
@@ -13,17 +21,19 @@ interface ApiKeyInfo {
 }
 
 interface ApiKeyListProps {
-    session: Session; // Nhận session để lấy token
-    onListChange: () => void; // Callback để thông báo thay đổi (tạo/xóa/cập nhật)
+    session: Session;
+    onListChange: () => void;
+    refreshTrigger: number; // Add the new prop
 }
 
-const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange }) => {
+const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshTrigger }) => {
     const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [deactivating, setDeactivating] = useState<string | null>(null); // State for deactivation loading
     const [activating, setActivating] = useState<string | null>(null); // State for activation loading
-    const [deleting, setDeleting] = useState<string | null>(null); // State for permanent deletion loading
+    const [deleting, setDeleting] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null); // State for success messages
 
     useEffect(() => {
         const fetchApiKeys = async () => {
@@ -67,21 +77,31 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange }) => {
                 data.keys.sort((a, b) => {
                     if (a.is_active && !b.is_active) return -1;
                     if (!a.is_active && b.is_active) return 1;
-                    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                    // Add safety check for date parsing during sort
+                    const dateA = new Date(a.created_at).getTime();
+                    const dateB = new Date(b.created_at).getTime();
+                    if (isNaN(dateA) || isNaN(dateB)) {
+                        console.error("Invalid date found during sorting:", a, b);
+                        return 0; // Avoid crash, maintain relative order or default
+                    }
+                    return dateB - dateA;
                 });
-                setKeys(data.keys);
+                setKeys(data.keys); // Update state with sorted keys
 
             } catch (err: any) {
                 console.error("Error fetching API keys:", err);
-                setError(err.message || 'An unexpected error occurred.');
+                 // Ensure error message is always a string
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                setError(errorMessage || 'An unexpected error occurred.');
+                setKeys([]); // Clear keys on fetch error to avoid rendering stale/bad data
             } finally {
                 setLoading(false);
             }
         };
 
         fetchApiKeys();
-    // Wrap fetchApiKeys in useCallback if needed, but dependency array handles it for now
-    }, [session, onListChange]); // Re-fetch if session or list changes externally
+    // Add refreshTrigger to dependency array
+    }, [session, onListChange, refreshTrigger]); // Re-fetch if session, list changes, or refreshTrigger changes
 
     const handleDeactivate = async (keyPrefix: string) => {
         if (!confirm(`Are you sure you want to deactivate the key starting with hp_${keyPrefix}?`)) {
@@ -120,10 +140,11 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange }) => {
                 throw new Error(responseData.detail || `Failed to deactivate API key: ${response.statusText}`);
             }
 
-            // Thành công! Cập nhật state cục bộ và gọi callback
+            // Thành công! Cập nhật state cục bộ và hiển thị thông báo
             setKeys(prevKeys => prevKeys.map(k => k.key_prefix === keyPrefix ? { ...k, is_active: false } : k));
-            alert(responseData.message || 'API Key deactivated successfully.');
-            // onListChange(); // Trigger list refresh in parent component (optional now)
+            setSuccessMessage(responseData.message || 'API Key deactivated successfully.');
+            setTimeout(() => setSuccessMessage(null), 3000); // Clear message after 3 seconds
+            // onListChange(); // Optional: Trigger list refresh if needed elsewhere
 
         } catch (err: any) {
             console.error("Error deactivating API key:", err);
@@ -175,10 +196,11 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange }) => {
                 throw new Error(responseData.detail || `Failed to activate API key: ${response.statusText}`);
             }
 
-            // Thành công! Cập nhật state cục bộ và gọi callback
+            // Thành công! Cập nhật state cục bộ và hiển thị thông báo
             setKeys(prevKeys => prevKeys.map(k => k.key_prefix === keyPrefix ? { ...k, is_active: true } : k));
-            alert(responseData.message || 'API Key activated successfully.');
-            // onListChange(); // Trigger list refresh in parent component (optional now)
+            setSuccessMessage(responseData.message || 'API Key activated successfully.');
+            setTimeout(() => setSuccessMessage(null), 3000); // Clear message after 3 seconds
+            // onListChange(); // Optional: Trigger list refresh if needed elsewhere
 
         } catch (err: any) {
             console.error("Error activating API key:", err);
@@ -229,10 +251,11 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange }) => {
                 throw new Error(responseData.detail || `Failed to permanently delete API key: ${response.statusText}`);
             }
 
-            // Thành công! Cập nhật state cục bộ (remove the key)
+            // Thành công! Cập nhật state cục bộ và hiển thị thông báo
             setKeys(prevKeys => prevKeys.filter(k => k.key_prefix !== keyPrefix));
-            alert(responseData.message || 'API Key permanently deleted successfully.');
-            // No need to call onListChange here as the key is gone from local state
+            setSuccessMessage(responseData.message || 'API Key permanently deleted successfully.');
+            setTimeout(() => setSuccessMessage(null), 3000); // Clear message after 3 seconds
+            // No need to call onListChange here
 
         } catch (err: any) {
             console.error("Error permanently deleting API key:", err);
@@ -244,79 +267,140 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange }) => {
 
 
     if (loading) {
-        return <div>Loading API Keys...</div>;
+        return (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 3 }}>
+                <CircularProgress />
+                <Typography sx={{ ml: 2 }}>Loading API Keys...</Typography>
+            </Box>
+        );
     }
 
     if (error) {
-        return <div style={{ color: 'var(--color-error)' }}>Error: {error}</div>; // Use CSS variable for color
+        // Use Alert for better visibility
+        return <Alert severity="error" sx={{ mt: 2 }}>Error: {error}</Alert>;
     }
 
     return (
-        <div>
-            <h3>Your API Keys</h3>
+        <Box> {/* Use Box as the main container */}
+            <Typography variant="h6" component="h3" gutterBottom>
+                Your API Keys
+            </Typography>
+
+            {/* Display Success/Error Messages */}
+            {error && <Alert severity="error" sx={{ mt: 2, mb: 2 }}>{error}</Alert>}
+            {successMessage && <Alert severity="success" sx={{ mt: 2, mb: 2 }}>{successMessage}</Alert>}
+
             {keys.length === 0 ? (
-                <p>You haven't created any API keys yet.</p>
+                <Typography sx={{ mt: 2 }}>You haven't created any API keys yet.</Typography>
             ) : (
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Prefix</th>
-                            <th>Created</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {keys.map((key) => (
-                            <tr key={key.key_prefix} className={!key.is_active ? 'inactive-key' : ''}>
-                                <td>{key.name || '-'}</td>
-                                <td>{`hp_${key.key_prefix}...`}</td>
-                                <td>{new Date(key.created_at).toLocaleString()}</td>
-                                <td>
-                                    <span className={`status ${key.is_active ? 'status-active' : 'status-inactive'}`}>
-                                        {key.is_active ? 'Active' : 'Inactive'}
-                                    </span>
-                                </td>
-                                <td className="action-buttons"> {/* Add class for easier styling */}
-                                    {key.is_active ? (
-                                        // Show Deactivate button if key is active
-                                        <button
-                                            onClick={() => handleDeactivate(key.key_prefix)}
-                                            disabled={deactivating === key.key_prefix || activating === key.key_prefix || deleting === key.key_prefix}
-                                            className="action-btn deactivate-btn"
-                                            title="Deactivate this key"
+                <TableContainer component={Paper} sx={{ mt: 2 }}> {/* Wrap table in Paper */}
+                    <Table sx={{ minWidth: 650 }} aria-label="api keys table">
+                        <TableHead>
+                            <TableRow>
+                                <TableCell>Name</TableCell>
+                                <TableCell>Prefix</TableCell>
+                                <TableCell>Created</TableCell>
+                                <TableCell>Status</TableCell>
+                                <TableCell align="right">Actions</TableCell> {/* Align actions to the right */}
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {keys.map((key) => {
+                                try {
+                                    // Attempt to render the row
+                                    return (
+                                        <TableRow
+                                            key={key.key_prefix}
+                                            sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
                                         >
-                                            {deactivating === key.key_prefix ? 'Deactivating...' : 'Deactivate'}
-                                        </button>
-                                    ) : (
-                                        // Show Activate button if key is inactive
-                                        <button
-                                            onClick={() => handleActivate(key.key_prefix)}
-                                            disabled={activating === key.key_prefix || deactivating === key.key_prefix || deleting === key.key_prefix}
-                                            className="action-btn activate-btn"
-                                            title="Activate this key"
-                                        >
-                                            {activating === key.key_prefix ? 'Activating...' : 'Activate'}
-                                        </button>
-                                    )}
-                                    {/* Add Permanent Delete Button */}
-                                    <button
-                                        onClick={() => handleDeletePermanently(key.key_prefix)}
-                                        disabled={deleting === key.key_prefix || activating === key.key_prefix || deactivating === key.key_prefix}
-                                        className="action-btn delete-btn" // Reuse delete-btn class or create a new one
-                                        title="Permanently delete this key (irreversible)"
-                                        style={{ marginLeft: '5px' }} // Keep margin for spacing
-                                    >
-                                        {deleting === key.key_prefix ? 'Deleting...' : 'Delete'}
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                                            <TableCell component="th" scope="row">
+                                                {key.name || '-'}
+                                            </TableCell>
+                                            <TableCell>{`hp_${key.key_prefix}...`}</TableCell>
+                                            {/* Add specific try-catch for date formatting */}
+                                            <TableCell>
+                                                {(() => {
+                                                    try {
+                                                        return new Date(key.created_at).toLocaleString();
+                                                    } catch (dateError) {
+                                                        console.error(`Error formatting date for key ${key.key_prefix}:`, dateError);
+                                                        return 'Invalid Date';
+                                                    }
+                                                })()}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Chip
+                                                    icon={key.is_active ? <CheckCircleIcon /> : <CancelIcon />}
+                                                    label={key.is_active ? 'Active' : 'Inactive'}
+                                                    color={key.is_active ? 'success' : 'default'}
+                                                    size="small"
+                                                    variant="outlined"
+                                                />
+                                            </TableCell>
+                                            <TableCell align="right">
+                                                {/* Activate/Deactivate Buttons */}
+                                                {key.is_active ? (
+                                                    <Tooltip title="Deactivate this key">
+                                                        <span>
+                                                            <IconButton
+                                                                size="small"
+                                                                onClick={() => handleDeactivate(key.key_prefix)}
+                                                                disabled={deactivating === key.key_prefix || activating === key.key_prefix || deleting === key.key_prefix}
+                                                                color="warning"
+                                                            >
+                                                                {deactivating === key.key_prefix ? <CircularProgress size={20} color="inherit" /> : <PauseCircleOutlineIcon fontSize="small" />}
+                                                            </IconButton>
+                                                        </span>
+                                                    </Tooltip>
+                                                ) : (
+                                                    <Tooltip title="Activate this key">
+                                                        <span>
+                                                            <IconButton
+                                                                size="small"
+                                                                onClick={() => handleActivate(key.key_prefix)}
+                                                                disabled={activating === key.key_prefix || deactivating === key.key_prefix || deleting === key.key_prefix}
+                                                                color="success"
+                                                            >
+                                                                {activating === key.key_prefix ? <CircularProgress size={20} color="inherit" /> : <PlayCircleOutlineIcon fontSize="small" />}
+                                                            </IconButton>
+                                                        </span>
+                                                    </Tooltip>
+                                                )}
+                                                {/* Delete Button */}
+                                                <Tooltip title="Permanently delete this key (irreversible)">
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() => handleDeletePermanently(key.key_prefix)}
+                                                        disabled={deleting === key.key_prefix || activating === key.key_prefix || deactivating === key.key_prefix}
+                                                        color="error"
+                                                        sx={{ ml: 1 }}
+                                                    >
+                                                        {deleting === key.key_prefix ? <CircularProgress size={20} color="inherit" /> : <DeleteIcon fontSize="small" />}
+                                                    </IconButton>
+                                                </Tooltip>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                } catch (renderError: any) {
+                                    // Log the error and render an error row
+                                    console.error(`Error rendering row for key ${key?.key_prefix}:`, renderError);
+                                    return (
+                                        <TableRow key={key?.key_prefix || `error-${Math.random()}`}>
+                                            <TableCell colSpan={5}>
+                                                {/* Removed invalid size="small" prop from Alert */}
+                                                <Alert severity="error" variant="outlined">
+                                                    Error rendering this API key row. Check console for details.
+                                                </Alert>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                }
+                            })}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
             )}
-        </div>
+        </Box>
     );
 };
 
