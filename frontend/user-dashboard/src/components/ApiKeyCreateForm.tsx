@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
+import toast from 'react-hot-toast'; // Import toast
 import {
-    TextField, Button, Box, Typography, CircularProgress, Alert, IconButton, InputAdornment, Snackbar, Tooltip // Import Tooltip
+    TextField, Button, Box, Typography, CircularProgress, Alert, IconButton, InputAdornment, Tooltip // Removed Snackbar
 } from '@mui/material'; // Import MUI components
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'; // Import copy icon
 
@@ -13,18 +14,18 @@ interface ApiKeyCreateFormProps {
 const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => { // Removed session from destructuring
     const [name, setName] = useState<string>('');
     const [loading, setLoading] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
+    // const [error, setError] = useState<string | null>(null); // Remove error state
     const [newKey, setNewKey] = useState<string | null>(null);
-    const [snackbarOpen, setSnackbarOpen] = useState(false); // State for Snackbar visibility
-
+    // const [snackbarOpen, setSnackbarOpen] = useState(false); // Remove Snackbar state
+ 
     const handleCreateKey = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault(); // Ngăn chặn gửi form mặc định
         setLoading(true);
-        setError(null);
+        // setError(null); // Remove error state reset
         setNewKey(null); // Xóa key cũ nếu có
-
+ 
         if (!supabase) {
-            setError("Supabase client is not initialized.");
+            toast.error("Supabase client is not initialized.");
             setLoading(false);
             return;
         }
@@ -57,13 +58,14 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
             // Thành công! Hiển thị key mới và gọi callback
             setNewKey(responseData.full_api_key);
             setName(''); // Xóa trường input name
+            toast.success('API Key created successfully!'); // Add success toast
             onKeyCreated(); // Thông báo cho component cha
-
+ 
         } catch (err: any) {
             console.error("Error creating API key:", err);
-            // Ensure error message is always a string before setting state
+            // Ensure error message is always a string before showing toast
             const errorMessage = err instanceof Error ? err.message : String(err);
-            setError(errorMessage || 'An unexpected error occurred.');
+            toast.error(errorMessage || 'An unexpected error occurred.');
         } finally {
             setLoading(false);
         }
@@ -73,25 +75,25 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
         if (newKey) {
             navigator.clipboard.writeText(newKey)
                 .then(() => {
-                    setSnackbarOpen(true); // Show Snackbar on success
+                    toast.success('API Key copied to clipboard!'); // Show toast on success
                     // Keep the key visible for a bit or hide immediately based on UX preference
                     // setNewKey(null); // Optional: Hide the key after copying
                 })
                 .catch(err => {
                     console.error('Failed to copy key: ', err);
-                    // Show error in UI instead of alert
-                    setError('Failed to copy key automatically. Please copy it manually.');
+                    toast.error('Failed to copy key automatically. Please copy it manually.'); // Show toast on error
                 });
         }
     };
-
-    const handleSnackbarClose = (event?: React.SyntheticEvent | Event, reason?: string) => {
-        if (reason === 'clickaway') {
-            return;
-        }
-        setSnackbarOpen(false);
-    };
-
+ 
+    // Remove handleSnackbarClose as Snackbar is removed
+    // const handleSnackbarClose = (_event?: React.SyntheticEvent | Event, reason?: string) => {
+    //     if (reason === 'clickaway') {
+    //         return;
+    //     }
+    //     setSnackbarOpen(false);
+    // };
+ 
     return (
         <Box component="div" sx={{ mt: 3 }}> {/* Use Box as container */}
             <Typography variant="h6" component="h4" gutterBottom>
@@ -120,9 +122,10 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
                     {loading ? 'Creating...' : 'Create Key'}
                 </Button>
             </Box>
-
-            {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
-
+ 
+            {/* Error messages are now handled by react-hot-toast */}
+            {/* {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>} */}
+ 
             {newKey && (
                 <Alert severity="success" sx={{ mt: 3, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                     <Typography variant="subtitle1" gutterBottom>
@@ -166,17 +169,10 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
                          Close
                      </Button>
                 </Alert>
-            )}
-             {/* Snackbar for copy confirmation */}
-             <Snackbar
-                open={snackbarOpen}
-                autoHideDuration={3000} // Hide after 3 seconds
-                onClose={handleSnackbarClose}
-                message="API Key copied to clipboard!"
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-            />
-        </Box>
-    );
+           )}
+            {/* Snackbar removed, confirmation handled by react-hot-toast */}
+       </Box>
+   );
 };
 
 export default ApiKeyCreateForm;

@@ -5,7 +5,7 @@ import { deepmerge } from '@mui/utils'; // Import deepmerge
 // --- Base Theme Configuration ---
 const baseThemeOptions: ThemeOptions = { // Explicitly type baseThemeOptions
   typography: {
-    fontFamily: '"Poppins", "Helvetica", "Arial", sans-serif',
+    fontFamily: '"Averta", "Poppins", "Helvetica", "Arial", sans-serif', // Use Averta first
     h1: { fontWeight: 700 },
     h2: { fontWeight: 700 },
     h3: { fontWeight: 500 },

@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // Added useCallback
 import { supabase } from '../supabaseClient';
+import toast from 'react-hot-toast'; // Import toast
 import type { Session } from '@supabase/supabase-js';
 import {
-    Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Button, Chip, Typography, Box, CircularProgress, Alert, IconButton, Tooltip
+    Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Typography, Box, CircularProgress, Alert, IconButton, Tooltip,
+    Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField, Button // Added Dialog components
 } from '@mui/material'; // Import MUI components
 import DeleteIcon from '@mui/icons-material/Delete';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -32,8 +34,11 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
     const [deactivating, setDeactivating] = useState<string | null>(null); // State for deactivation loading
     const [activating, setActivating] = useState<string | null>(null); // State for activation loading
     const [deleting, setDeleting] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [successMessage, setSuccessMessage] = useState<string | null>(null); // State for success messages
+    const [error, setError] = useState<string | null>(null); // Keep for initial fetch error
+    // const [successMessage, setSuccessMessage] = useState<string | null>(null); // Remove success message state
+    const [confirmDeleteDialogOpen, setConfirmDeleteDialogOpen] = useState(false);
+    const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
+    const [deleteConfirmationInput, setDeleteConfirmationInput] = useState('');
 
     useEffect(() => {
         const fetchApiKeys = async () => {
@@ -142,13 +147,13 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
 
             // Thành công! Cập nhật state cục bộ và hiển thị thông báo
             setKeys(prevKeys => prevKeys.map(k => k.key_prefix === keyPrefix ? { ...k, is_active: false } : k));
-            setSuccessMessage(responseData.message || 'API Key deactivated successfully.');
-            setTimeout(() => setSuccessMessage(null), 3000); // Clear message after 3 seconds
+            toast.success(responseData.message || 'API Key deactivated successfully.');
             // onListChange(); // Optional: Trigger list refresh if needed elsewhere
-
+ 
         } catch (err: any) {
             console.error("Error deactivating API key:", err);
-            setError(err.message || 'An unexpected error occurred during deactivation.');
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            toast.error(errorMessage || 'An unexpected error occurred during deactivation.');
         } finally {
             setDeactivating(null); // Clear loading state for this key
         }
@@ -198,25 +203,41 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
 
             // Thành công! Cập nhật state cục bộ và hiển thị thông báo
             setKeys(prevKeys => prevKeys.map(k => k.key_prefix === keyPrefix ? { ...k, is_active: true } : k));
-            setSuccessMessage(responseData.message || 'API Key activated successfully.');
-            setTimeout(() => setSuccessMessage(null), 3000); // Clear message after 3 seconds
+            toast.success(responseData.message || 'API Key activated successfully.');
             // onListChange(); // Optional: Trigger list refresh if needed elsewhere
-
+ 
         } catch (err: any) {
             console.error("Error activating API key:", err);
-            setError(err.message || 'An unexpected error occurred during activation.');
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            toast.error(errorMessage || 'An unexpected error occurred during activation.');
         } finally {
             setActivating(null); // Clear loading state for this key
         }
     };
 
-    const handleDeletePermanently = async (keyPrefix: string) => {
-        // Stronger confirmation for permanent deletion
-        const confirmation = prompt(`DANGER ZONE! This action is irreversible. To confirm permanent deletion of the key starting with hp_${keyPrefix}, please type "DELETE" below:`);
-        if (confirmation !== 'DELETE') {
-            alert("Deletion cancelled.");
+    // Function to open the confirmation dialog
+    const openDeleteConfirmationDialog = (keyPrefix: string) => {
+        setKeyToDelete(keyPrefix);
+        setDeleteConfirmationInput(''); // Reset input field
+        setConfirmDeleteDialogOpen(true);
+    };
+
+    // Function to close the confirmation dialog
+    const handleCloseDeleteConfirmationDialog = () => {
+        setConfirmDeleteDialogOpen(false);
+        setKeyToDelete(null);
+    };
+
+    // Function to handle the actual deletion after confirmation
+    const handleConfirmDeletion = useCallback(async () => {
+        if (deleteConfirmationInput !== 'DELETE' || !keyToDelete) {
+            toast.error('Incorrect confirmation text entered. Deletion cancelled.');
+            handleCloseDeleteConfirmationDialog();
             return;
         }
+
+        const keyPrefix = keyToDelete; // Store keyPrefix before closing dialog potentially clears it
+        handleCloseDeleteConfirmationDialog(); // Close dialog immediately
 
         setDeleting(keyPrefix); // Set loading state for this specific key
         setError(null);
@@ -253,17 +274,17 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
 
             // Thành công! Cập nhật state cục bộ và hiển thị thông báo
             setKeys(prevKeys => prevKeys.filter(k => k.key_prefix !== keyPrefix));
-            setSuccessMessage(responseData.message || 'API Key permanently deleted successfully.');
-            setTimeout(() => setSuccessMessage(null), 3000); // Clear message after 3 seconds
+            toast.success(responseData.message || 'API Key permanently deleted successfully.');
             // No need to call onListChange here
-
+ 
         } catch (err: any) {
             console.error("Error permanently deleting API key:", err);
-            setError(err.message || 'An unexpected error occurred during permanent deletion.');
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            toast.error(errorMessage || 'An unexpected error occurred during permanent deletion.');
         } finally {
             setDeleting(null); // Clear loading state for this key
         }
-    };
+    }, [keyToDelete, deleteConfirmationInput, supabase]); // Add dependencies
 
 
     if (loading) {
@@ -286,10 +307,10 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                 Your API Keys
             </Typography>
 
-            {/* Display Success/Error Messages */}
+            {/* Display Initial Fetch Error Message */}
             {error && <Alert severity="error" sx={{ mt: 2, mb: 2 }}>{error}</Alert>}
-            {successMessage && <Alert severity="success" sx={{ mt: 2, mb: 2 }}>{successMessage}</Alert>}
-
+            {/* Success messages are now handled by react-hot-toast */}
+ 
             {keys.length === 0 ? (
                 <Typography sx={{ mt: 2 }}>You haven't created any API keys yet.</Typography>
             ) : (
@@ -370,7 +391,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                                                 <Tooltip title="Permanently delete this key (irreversible)">
                                                     <IconButton
                                                         size="small"
-                                                        onClick={() => handleDeletePermanently(key.key_prefix)}
+                                                        onClick={() => openDeleteConfirmationDialog(key.key_prefix)} // Open dialog instead
                                                         disabled={deleting === key.key_prefix || activating === key.key_prefix || deactivating === key.key_prefix}
                                                         color="error"
                                                         sx={{ ml: 1 }}
@@ -400,7 +421,44 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                     </Table>
                 </TableContainer>
             )}
-        </Box>
+
+            {/* Confirmation Dialog (Moved inside the main Box) */}
+            <Dialog open={confirmDeleteDialogOpen} onClose={handleCloseDeleteConfirmationDialog}>
+                <DialogTitle sx={{ color: 'error.main', fontWeight: 'bold' }}>DANGER ZONE!</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        This action is irreversible. To confirm permanent deletion of the key starting with{' '}
+                        <strong>{`hp_${keyToDelete}`}</strong>, please type "DELETE" below:
+                    </DialogContentText>
+                    <TextField
+                        autoFocus
+                        margin="dense"
+                        id="delete-confirm"
+                        label='Type "DELETE" to confirm'
+                        type="text"
+                        fullWidth
+                        variant="outlined"
+                        value={deleteConfirmationInput}
+                        onChange={(e) => setDeleteConfirmationInput(e.target.value)}
+                        error={deleteConfirmationInput !== '' && deleteConfirmationInput !== 'DELETE'} // Show error if typed but incorrect
+                        helperText={deleteConfirmationInput !== '' && deleteConfirmationInput !== 'DELETE' ? 'Incorrect text' : ''}
+                        sx={{ mt: 2 }}
+                    />
+                </DialogContent>
+                <DialogActions sx={{ pb: 2, px: 3 }}>
+                    <Button onClick={handleCloseDeleteConfirmationDialog}>Cancel</Button>
+                    <Button
+                        onClick={handleConfirmDeletion}
+                        color="error"
+                        variant="contained"
+                        disabled={deleteConfirmationInput !== 'DELETE'} // Disable if not typed correctly
+                    >
+                        Confirm Permanent Deletion
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+        </Box> // Closing tag of the main Box
     );
 };
 

@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react'; // Removed unused React import
 import { Alert, AlertTitle, Box, Typography, Button } from '@mui/material';
 
 interface Props {

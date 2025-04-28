@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next'; // Import useTranslation
+import { Toaster } from 'react-hot-toast'; // Import Toaster
 import { supabase } from './supabaseClient';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
@@ -8,10 +9,10 @@ import ApiKeyList from './components/ApiKeyList';
 import ApiKeyCreateForm from './components/ApiKeyCreateForm';
 import ProviderKeyManager from './components/ProviderKeyManager';
 import {
-  Tabs, Tab, Box, ThemeProvider, CssBaseline, PaletteMode, AppBar, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useTheme, useMediaQuery, Button, Container, Paper, Alert, Avatar, Tooltip, Menu, MenuItem // Import Menu, MenuItem
+  Box, ThemeProvider, CssBaseline, PaletteMode, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useMediaQuery, Container, Paper, Alert, Avatar, Tooltip, Menu, MenuItem // Removed unused: Tabs, Tab, AppBar, useTheme, Button
 } from '@mui/material'; // Import layout components
 import MenuIcon from '@mui/icons-material/Menu'; // Import Menu icon
-import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'; // Import ChevronLeftIcon
+// import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'; // Removed unused import
 import LogoutIcon from '@mui/icons-material/Logout'; // Import Logout icon
 import Brightness4Icon from '@mui/icons-material/Brightness4'; // Dark mode icon
 import Brightness7Icon from '@mui/icons-material/Brightness7'; // Light mode icon
@@ -316,7 +317,8 @@ function App() {
                 </Typography>
                 <Box>
                   {/* Language Menu Button */}
-                  <Tooltip title={t('header.changeLanguage', 'Change Language')}> {/* Add a generic key */}
+                  <Tooltip title={t('header.changeLanguage', 'Change Language')}>
+                    {/* Removed comment inside Tooltip to fix TS error */}
                     <IconButton
                       sx={{ ml: 1 }}
                       onClick={handleLanguageMenuOpen}
@@ -375,6 +377,39 @@ function App() {
           </Box> {/* End Flex Container */}
         </>
       )}
+      <Toaster
+        position="top-right" // Changed position to top-right
+        reverseOrder={false}
+        toastOptions={{
+          // Define default options (optional)
+          // className: '',
+          // duration: 5000,
+          // style: {
+          //   background: '#363636',
+          //   color: '#fff',
+          // },
+
+          // Define options for specific types
+          success: {
+            // duration: 3000, // Optional: specific duration for success
+            style: {
+              background: themeMode === 'light' ? '#27ae60' : '#abebc6', // Green background based on theme
+              color: themeMode === 'light' ? '#FFFFFF' : '#1d6f42', // Text color based on theme
+            },
+            iconTheme: { // Optional: style the default checkmark icon
+                primary: themeMode === 'light' ? '#FFFFFF' : '#1d6f42', // Icon color matches text
+                secondary: themeMode === 'light' ? '#27ae60' : '#abebc6', // Icon background matches toast background
+            },
+          },
+          error: {
+            // You could define specific styles for error toasts here too
+            // style: {
+            //   background: muiTheme.palette.error.main,
+            //   color: muiTheme.palette.error.contrastText,
+            // },
+          },
+        }}
+      />
     </ThemeProvider>
   );
 }

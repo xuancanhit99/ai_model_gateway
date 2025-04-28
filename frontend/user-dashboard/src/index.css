@@ -1,3 +1,16 @@
+/* Declare custom font */
+@font-face {
+  font-family: 'Averta';
+  src: url('/fonts/averta.ttf') format('truetype'); /* Path relative to public folder */
+  /* Add other font weights/styles if you have them */
+  /* e.g.,
+  src: url('/fonts/averta-bold.ttf') format('truetype');
+  font-weight: bold;
+  */
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap; /* Improves perceived performance */
+}
 /* Global styles are now primarily handled by MUI CssBaseline and theme */
 /* Add any very specific global overrides here if absolutely necessary */
 

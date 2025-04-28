@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next'; // Import useTranslation
 import { supabase } from '../supabaseClient';
+import toast from 'react-hot-toast'; // Import toast
 import {
   Box,
   IconButton, 
@@ -39,13 +40,13 @@ const ProviderKeyList: React.FC = () => {
   const { t } = useTranslation(); // Use the hook
   const [providerKeys, setProviderKeys] = useState<ProviderKey[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
+  const [error, setError] = useState<string | null>(null); // Keep for initial fetch error display before table renders
+  // const [successMessage, setSuccessMessage] = useState<string | null>(null); // Remove success message state
+ 
   const fetchProviderKeys = async () => {
     try {
       setLoading(true);
-      setError(null);
+      setError(null); // Reset error before fetch
       
       if (!supabase) {
         // Use translation for error
@@ -76,7 +77,7 @@ const ProviderKeyList: React.FC = () => {
 
   const handleSelectKey = async (keyId: string, providerName: string, currentIsSelected: boolean) => {
     try {
-      setError(null);
+      // setError(null); // Errors handled by toast now
       
       if (!supabase) {
         // Use translation for error
@@ -109,15 +110,14 @@ const ProviderKeyList: React.FC = () => {
       
       if (error) throw error;
       
-      setSuccessMessage(successMsg);
-      setTimeout(() => setSuccessMessage(null), 3000);
+      toast.success(successMsg); // Show success toast
       
       // Refresh the list
       fetchProviderKeys();
     } catch (error: any) {
       console.error('Error updating provider key selection:', error);
-      // Use translation for error
-      setError(`${t('providerList.updateSelectionError', 'Error updating selection:')} ${error.message}`);
+      // Use translation for error toast
+      toast.error(`${t('providerList.updateSelectionError', 'Error updating selection:')} ${error.message}`);
     }
   };
 
@@ -129,7 +129,7 @@ const ProviderKeyList: React.FC = () => {
     }
     
     try {
-      setError(null);
+      // setError(null); // Errors handled by toast now
       
       if (!supabase) {
         // Use translation for error
@@ -143,16 +143,15 @@ const ProviderKeyList: React.FC = () => {
       
       if (error) throw error;
       
-      // Use translation for success message
-      setSuccessMessage(t('providerList.deleteSuccess', { provider: providerDisplayNames[providerName] || providerName }));
-      setTimeout(() => setSuccessMessage(null), 3000);
+      // Use translation for success toast
+      toast.success(t('providerList.deleteSuccess', { provider: providerDisplayNames[providerName] || providerName }));
       
       // Refresh the list
       fetchProviderKeys();
     } catch (error: any) {
       console.error('Error deleting provider key:', error);
-      // Use translation for error
-      setError(`${t('providerList.deleteError', 'Error deleting key:')} ${error.message}`);
+      // Use translation for error toast
+      toast.error(`${t('providerList.deleteError', 'Error deleting key:')} ${error.message}`);
     }
   };
 
@@ -171,19 +170,16 @@ const ProviderKeyList: React.FC = () => {
         {t('providerList.title')}
       </Typography>
       
-      {error && (
+      {/* Display initial fetch error if it occurred before rendering the list */}
+      {error && !loading && providerKeys.length === 0 && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}
       
-      {successMessage && (
-        <Alert severity="success" sx={{ mb: 2 }}>
-          {successMessage}
-        </Alert>
-      )}
+      {/* Success and other error messages are now handled by react-hot-toast */}
       
-      {providerKeys.length === 0 ? (
+      {providerKeys.length === 0 && !loading && !error ? ( // Show 'no keys' only if not loading and no initial error
         <Alert severity="info">
           {t('providerView.noKeys')} {/* Use translation */}
         </Alert>

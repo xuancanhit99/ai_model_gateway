@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next'; // Import useTranslation
 import { supabase } from '../supabaseClient';
+import toast from 'react-hot-toast'; // Import toast
 import {
   Box,
   Button,
@@ -11,7 +12,7 @@ import {
   Select,
   TextField,
   Typography,
-  Alert,
+  // Alert, // Remove Alert import if no longer needed
   Paper,
   SelectChangeEvent
 } from '@mui/material';
@@ -26,9 +27,9 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
   const [apiKey, setApiKey] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-
+  // const [error, setError] = useState<string | null>(null); // Remove error state
+  // const [success, setSuccess] = useState(false); // Remove success state
+ 
   const handleProviderChange = (event: SelectChangeEvent<string>) => {
     setProvider(event.target.value);
   };
@@ -37,14 +38,14 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
     e.preventDefault();
     
     if (!provider || !apiKey) {
-      // Use translation for error message
-      setError(t('providerCreateForm.providerAndApiKeyRequired', 'Provider and API Key are required'));
+      // Use translation for error toast
+      toast.error(t('providerCreateForm.providerAndApiKeyRequired', 'Provider and API Key are required'));
       return;
     }
     
     setLoading(true);
-    setError(null);
-    setSuccess(false);
+    // setError(null); // Remove error state reset
+    // setSuccess(false); // Remove success state reset
     
     try {
       // Check if supabase is initialized
@@ -83,15 +84,14 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
             setProvider('');
             setApiKey('');
             setName('');
-            setSuccess(true);
+            toast.success(t('providerCreateForm.keyAddedSuccess')); // Show success toast
             
             // Call onSuccess if provided
             if (onSuccess) {
               onSuccess();
             }
             
-            // Clear success message after a delay
-            setTimeout(() => setSuccess(false), 5000);
+            // No need for timeout, toast handles its own dismissal
             
             resolve();
           } else {
@@ -104,21 +104,27 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
             } catch (e) {
               // Ignore parse error
             }
-            
+            // Use toast.error instead of rejecting with Error for UI feedback
+            toast.error(errorMessage);
+            // Still reject the promise for internal handling if needed, but UI error is shown via toast
             reject(new Error(errorMessage));
           }
         };
         
         xhr.onerror = function() {
           console.error('XHR Network Error');
-          // Use translation for error message
-          reject(new Error(t('providerCreateForm.networkError', 'Network error occurred. Please check your connection.')));
+          // Use translation for error toast
+          const networkErrorMsg = t('providerCreateForm.networkError', 'Network error occurred. Please check your connection.');
+          toast.error(networkErrorMsg);
+          reject(new Error(networkErrorMsg));
         };
         
         xhr.onabort = function() {
           console.error('XHR Aborted');
-          // Use translation for error message
-          reject(new Error(t('providerCreateForm.requestAborted', 'Request was aborted.')));
+          // Use translation for error toast
+          const abortErrorMsg = t('providerCreateForm.requestAborted', 'Request was aborted.');
+          toast.error(abortErrorMsg);
+          reject(new Error(abortErrorMsg));
         };
         
         const data = JSON.stringify({
@@ -132,9 +138,9 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       
     } catch (error: any) {
       console.error('Error creating provider key:', error);
-      // Use translation for error message, include original error if possible
+      // Use translation for error toast, include original error if possible
       const defaultError = t('providerCreateForm.createFailed', 'Failed to create provider key');
-      setError(`${t('providerCreateForm.keyAddedError')} ${error.message || defaultError}`);
+      toast.error(`${t('providerCreateForm.keyAddedError')} ${error.message || defaultError}`);
     } finally {
       setLoading(false);
     }
@@ -147,17 +153,17 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
         {t('providerCreateForm.title')}
       </Typography>
       
-      {error && (
+      {/* Error and Success messages are now handled by react-hot-toast */}
+      {/* {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
-      )}
-      
-      {success && (
+      )} */}
+      {/* {success && (
         <Alert severity="success" sx={{ mb: 2 }}>
-          {t('providerCreateForm.keyAddedSuccess')} {/* Use translation */}
+          {t('providerCreateForm.keyAddedSuccess')}
         </Alert>
-      )}
+      )} */}
       
       <Box component="form" onSubmit={handleSubmit}>
         <FormControl fullWidth sx={{ mb: 2 }}>
