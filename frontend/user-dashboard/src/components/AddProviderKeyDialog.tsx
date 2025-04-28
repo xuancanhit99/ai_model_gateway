@@ -131,7 +131,8 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
         
-        xhr.onload = function() {
+        // Chuyển thành async function để có thể await
+        xhr.onload = async function() {
           if (xhr.status >= 200 && xhr.status < 300) {
             console.log('XHR Success:', xhr.status, xhr.statusText);
             // Parse response và ép kiểu an toàn
@@ -154,17 +155,23 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
             setApiKey('');
             setName('');
             toast.success(t('providerCreateForm.keyAddedSuccess', 'API key added successfully')); 
-            
-            // Ghi nhật ký khi thêm key thành công qua API
+            // Ghi nhật ký khi thêm key thành công qua API và chờ hoàn tất
             const keyIdForLog = responseData?.id || null;
             const providerNameForLog = responseData?.provider_name || providerName; // Fallback nếu response không có
             const descriptionForLog = `Added new ${name ? `"${name}" ` : ''}key for ${providerDisplayName}`;
-            addProviderKeyLog('ADD', providerNameForLog, keyIdForLog, descriptionForLog);
-            
-            // Call onSuccess if provided
-            if (onSuccess) {
-              onSuccess();
+            try {
+              // Await lời gọi ghi log
+              await addProviderKeyLog('ADD', providerNameForLog, keyIdForLog, descriptionForLog);
+            } catch (logError) {
+               console.error("Logging failed, but proceeding:", logError);
+               // Có thể bỏ qua lỗi log hoặc hiển thị thông báo phụ
             }
+            
+            // Call onSuccess CHỈ SAU KHI ghi log đã được thử (await)
+            if (onSuccess) {
+              onSuccess(); // Sẽ trigger fetchProviderKeys và fetchProviderKeyLogs trong parent
+            }
+            
             
             // Đóng dialog
             handleClose();
