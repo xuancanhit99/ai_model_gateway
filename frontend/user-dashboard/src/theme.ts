@@ -55,6 +55,7 @@ const baseThemeOptions: ThemeOptions = { // Explicitly type baseThemeOptions
         styleOverrides: {
             paper: {
                 borderRight: '1px solid', // Add border to Drawer paper
+                // Background color will be set per theme below
             }
         }
     }
@@ -98,8 +99,8 @@ const lightPalette = {
     contrastText: '#FFFFFF',
   },
   background: {
-    default: '#FFFBFE', // M3 Surface
-    paper: '#FFFBFE', // M3 Surface - Use for cards, dialogs etc.
+    default: '#f5f7fb', // Custom light background
+    paper: '#ffffff', // Custom card background (white)
   },
   text: {
     primary: '#1C1B1F', // M3 On Surface
@@ -160,7 +161,6 @@ const darkPalette = {
 // Use deepmerge to combine base options with specific palettes
 const lightTheme = createTheme(deepmerge(baseThemeOptions, { palette: lightPalette }));
 const darkTheme = createTheme(deepmerge(baseThemeOptions, { palette: darkPalette }));
-
 
 // --- Export Function to Get Theme Based on Mode ---
 export const getAppTheme = (mode: PaletteMode) => {

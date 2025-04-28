@@ -209,7 +209,7 @@ function App() {
                   width: drawerWidth,
                   boxSizing: 'border-box',
                   borderRight: 'none', // Remove border to match Figma
-                  backgroundColor: muiTheme.palette.background.paper, // Ensure consistent background
+                  backgroundColor: themeMode === 'light' ? muiTheme.palette.primary.light : muiTheme.palette.background.paper, // Use Primary Light for light mode sidebar
                 },
               }}
             >
