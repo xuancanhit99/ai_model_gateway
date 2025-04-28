@@ -317,12 +317,8 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                 <TableContainer component={Paper} sx={{ mt: 2 }}> {/* Wrap table in Paper */}
                     <Table sx={{ minWidth: 650 }} aria-label="api keys table">
                         <TableHead>
-                            <TableRow>
-                                <TableCell>Name</TableCell>
-                                <TableCell>Prefix</TableCell>
-                                <TableCell>Created</TableCell>
-                                <TableCell>Status</TableCell>
-                                <TableCell align="right">Actions</TableCell> {/* Align actions to the right */}
+                            <TableRow>{/* Ensure no whitespace between TableRow and TableCell */}
+                                <TableCell>Name</TableCell><TableCell>Prefix</TableCell><TableCell>Created</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell>{/* Align actions to the right */}
                             </TableRow>
                         </TableHead>
                         <TableBody>
@@ -333,13 +329,10 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                                         <TableRow
                                             key={key.key_prefix}
                                             sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
-                                        >
+                                        >{/* Ensure no whitespace between TableRow and TableCell */}
                                             <TableCell component="th" scope="row">
                                                 {key.name || '-'}
-                                            </TableCell>
-                                            <TableCell>{`hp_${key.key_prefix}...`}</TableCell>
-                                            {/* Add specific try-catch for date formatting */}
-                                            <TableCell>
+                                            </TableCell><TableCell>{`hp_${key.key_prefix}...`}</TableCell><TableCell>
                                                 {(() => {
                                                     try {
                                                         return new Date(key.created_at).toLocaleString();
@@ -348,8 +341,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                                                         return 'Invalid Date';
                                                     }
                                                 })()}
-                                            </TableCell>
-                                            <TableCell>
+                                            </TableCell><TableCell>
                                                 <Chip
                                                     icon={key.is_active ? <CheckCircleIcon /> : <CancelIcon />}
                                                     label={key.is_active ? 'Active' : 'Inactive'}
@@ -357,8 +349,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                                                     size="small"
                                                     variant="outlined"
                                                 />
-                                            </TableCell>
-                                            <TableCell align="right">
+                                            </TableCell><TableCell align="right">
                                                 {/* Activate/Deactivate Buttons */}
                                                 {key.is_active ? (
                                                     <Tooltip title="Deactivate this key">
