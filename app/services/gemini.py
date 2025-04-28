@@ -1,5 +1,6 @@
 # app/services/gemini.py
 import google.generativeai as genai
+import google.api_core.exceptions # Import Google API core exceptions
 from google.generativeai.types import generation_types # Import specific types for error handling
 from typing import AsyncGenerator, Tuple # Add Tuple
 from app.core.config import get_settings
@@ -48,26 +49,37 @@ class GeminiService:
 
         try:
             # Use self.genai_model
+            # Note: generate_content is synchronous, consider using generate_content_async if needed
             response = self.genai_model.generate_content([final_prompt, image_part])
-            # Accessing response.text directly might raise if the response was blocked or empty
+
             if not response.parts:
-                 # Handle cases where the response might be empty due to safety or other reasons
                  if response.prompt_feedback.block_reason:
                      raise generation_types.BlockedPromptException(f"Prompt blocked due to {response.prompt_feedback.block_reason.name}")
                  else:
-                     return "", self.model_id # Return empty string and model ID
-            # Return extracted text and the model ID used
+                     return "", self.model_id
             return response.text, self.model_id
         except generation_types.BlockedPromptException as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Content blocked by Gemini safety filters: {e}"
-            )
+            # Safety filter block
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Content blocked by Gemini safety filters: {e}")
+        except google.api_core.exceptions.PermissionDenied as e:
+            # Map PermissionDenied (403)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gemini Permission Denied: {e}")
+        except google.api_core.exceptions.ResourceExhausted as e:
+            # Map ResourceExhausted (429)
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Gemini Quota/Rate Limit Exceeded: {e}")
+        except google.api_core.exceptions.InvalidArgument as e:
+             # Map InvalidArgument (400) - often API key issues or bad requests
+             # Check if message indicates API key issue specifically
+             if "api key not valid" in str(e).lower():
+                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid Gemini API Key: {e}")
+             else:
+                  raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid Argument to Gemini: {e}")
+        except google.api_core.exceptions.Unauthenticated as e:
+             # Map Unauthenticated (401)
+             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini Authentication Failed: {e}")
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error processing image with Gemini: {e}"
-            )
+            # Catch-all for other unexpected errors
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error processing image with Gemini: {e}")
 
     async def generate_text_response(
         self,
@@ -124,17 +136,28 @@ class GeminiService:
                      return "Model did not provide a response.", target_model_id # Return target_model_id
  
              # Return both the text and the actual model ID used
-            return response.text, target_model_id # Return target_model_id
+            return response.text, target_model_id
         except generation_types.BlockedPromptException as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Chat content blocked by Gemini safety filters: {e}"
-            )
+            # Safety filter block
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Chat content blocked by Gemini safety filters: {e}")
+        except google.api_core.exceptions.PermissionDenied as e:
+            # Map PermissionDenied (403)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gemini Permission Denied: {e}")
+        except google.api_core.exceptions.ResourceExhausted as e:
+            # Map ResourceExhausted (429)
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Gemini Quota/Rate Limit Exceeded: {e}")
+        except google.api_core.exceptions.InvalidArgument as e:
+             # Map InvalidArgument (400)
+             if "api key not valid" in str(e).lower():
+                  raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid Gemini API Key: {e}")
+             else:
+                  raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid Argument to Gemini: {e}")
+        except google.api_core.exceptions.Unauthenticated as e:
+             # Map Unauthenticated (401)
+             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini Authentication Failed: {e}")
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error generating chat response with Gemini: {e}"
-            )
+            # Catch-all for other unexpected errors
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error generating chat response with Gemini: {e}")
 
     async def stream_text_response(
             self,
@@ -200,12 +223,35 @@ class GeminiService:
                          continue
 
 
+            # --- Error Handling for Streaming ---
+            # Catch specific Google API errors and re-raise as HTTPExceptions
+            # Note: Error handling within an async generator is tricky.
+            # Re-raising might terminate the generator. A common pattern is to yield an error message.
+            # However, for failover, we need the exception to propagate *before* streaming starts if possible,
+            # or handle it within the ModelRouter's stream loop if it occurs mid-stream.
+            # Let's refine the error handling here to raise exceptions that ModelRouter can catch.
+
             except generation_types.BlockedPromptException as e:
-                # This might be caught before streaming starts
-                print(f"Initial prompt blocked by Gemini safety filters: {e}")
-                # Yield an error message or raise? Yielding might be safer for SSE.
-                yield f"[ERROR: Initial prompt blocked by safety filter - {e}]"
+                # Safety filter block - Treat as 400 Bad Request
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stream content blocked by Gemini safety filters: {e}")
+            except google.api_core.exceptions.PermissionDenied as e:
+                # Map PermissionDenied (403)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gemini Permission Denied during stream: {e}")
+            except google.api_core.exceptions.ResourceExhausted as e:
+                # Map ResourceExhausted (429)
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Gemini Quota/Rate Limit Exceeded during stream: {e}")
+            except google.api_core.exceptions.InvalidArgument as e:
+                 # Map InvalidArgument (400)
+                 if "api key not valid" in str(e).lower():
+                      raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid Gemini API Key during stream: {e}")
+                 else:
+                      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid Argument to Gemini during stream: {e}")
+            except google.api_core.exceptions.Unauthenticated as e:
+                 # Map Unauthenticated (401)
+                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini Authentication Failed during stream: {e}")
             except Exception as e:
-                print(f"Error during Gemini streaming generation: {e}")
-                # Yield an error message
-                yield f"[ERROR: Internal server error during streaming - {e}]"
+                # Catch-all for other unexpected errors during streaming setup or iteration
+                # Log the error properly
+                logging.exception(f"Unexpected error during Gemini streaming generation: {e}")
+                # Raise a 500 error that ModelRouter can potentially handle or yield as an error chunk
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error during Gemini streaming: {e}")

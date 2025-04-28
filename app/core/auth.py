@@ -359,17 +359,25 @@ async def verify_api_key_with_provider_keys(
     Extended version of verify_api_key that also retrieves selected provider keys.
     
     Returns:
-        Dict containing user_id, key_prefix, and provider_keys dictionary
+        Dict containing user_id, key_prefix, provider_keys dictionary, and the original token.
     """
     # First verify the API key like normal
-    auth_info = await verify_api_key(credentials, supabase)
-    
+    # verify_api_key returns {"user_id": ..., "key_prefix": ...}
+    auth_data = await verify_api_key(credentials, supabase)
+    user_id = auth_data.get("user_id")
+
+    # Prepare the dictionary to return
+    auth_info_to_return = {
+        "user_id": user_id,
+        "key_prefix": auth_data.get("key_prefix"),
+        "provider_keys": {},
+        "token": credentials.credentials # Thêm token (API key gốc) vào đây
+    }
+
     # Then get any selected provider keys for this user
-    user_id = auth_info.get("user_id")
     if user_id:
         provider_keys = await get_user_provider_keys(supabase, user_id)
-        auth_info["provider_keys"] = provider_keys
-    else:
-        auth_info["provider_keys"] = {}
-        
-    return auth_info
+        auth_info_to_return["provider_keys"] = provider_keys
+    # else: provider_keys đã là {}
+
+    return auth_info_to_return

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # --- API ---
     API_V1_STR: str = "/api/v1"
 
+    #
+    API_BASE_URL: str = "http://ai_gateway_service:6161"
+
     # --- AI Model Settings ---
     GOOGLE_AI_STUDIO_API_KEY: Optional[str] = None
     GEMINI_VISION_MODEL_NAME: str = "gemini-2.0-flash"

@@ -2,9 +2,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, status, Request
 from fastapi.responses import StreamingResponse
 from typing import Dict, Any, Optional, List
+from supabase import Client # Thêm import Supabase Client
+from app.core.supabase_client import get_supabase_client # Import dependency lấy Supabase client
 from app.core.auth import verify_api_key_with_provider_keys  # Sử dụng phiên bản nâng cao
 from app.models.schemas import (
-    ChatCompletionRequest, 
+    ChatCompletionRequest,
     ErrorResponse,
     ModelList,
     ModelInfo
@@ -31,15 +33,16 @@ router = APIRouter()
 )
 async def create_chat_completion(
     request: Request,
-    auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys),  # Sử dụng phiên bản nâng cao
+    auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys),  # auth_info giờ chứa cả token
+    supabase: Client = Depends(get_supabase_client), # Inject Supabase client
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
     x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
     x_gigachat_api_key: Optional[str] = Header(None, alias="X-GigaChat-API-Key"),
     x_perplexity_api_key: Optional[str] = Header(None, alias="X-Perplexity-API-Key"),
 ):
     """
-    Tạo chat completion tương thích với OpenAI, hỗ trợ Gemini, Grok, GigaChat, và Perplexity Sonar.
-    Đọc request body trực tiếp để đảm bảo linh hoạt tối đa.
+    Tạo chat completion tương thích với OpenAI, hỗ trợ tự động failover.
+    Đọc request body trực tiếp.
     """
     try:
         # Đọc request body
@@ -92,9 +95,11 @@ async def create_chat_completion(
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    provider_api_keys=provider_api_keys
+                    provider_api_keys=provider_api_keys,
+                    supabase=supabase, # Truyền supabase client
+                    auth_info=auth_info # Truyền auth_info đầy đủ (chứa token)
                 ):
-                    yield chunk # ModelRouter.stream_chat_completion sẽ định dạng SSE
+                    yield chunk
 
             # Trả về StreamingResponse
             return StreamingResponse(stream_generator(), media_type="text/event-stream")
@@ -105,10 +110,13 @@ async def create_chat_completion(
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                provider_api_keys=provider_api_keys
+                provider_api_keys=provider_api_keys,
+                supabase=supabase, # Truyền supabase client
+                auth_info=auth_info # Truyền auth_info đầy đủ (chứa token)
             )
             # Ghi log phản hồi JSON trước khi trả về (chỉ cho non-streaming)
-            logging.info(f"API Response: {json.dumps(response, indent=2, ensure_ascii=False)}")
+            # Có thể di chuyển log này vào trong ModelRouter nếu muốn log cả trường hợp failover
+            logging.info(f"Final API Response: {json.dumps(response, indent=2, ensure_ascii=False)}")
             return response
         
     except ValueError as e:
