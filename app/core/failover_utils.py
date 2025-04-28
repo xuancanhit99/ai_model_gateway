@@ -49,7 +49,9 @@ async def attempt_automatic_failover(
     # Lấy tên của key bị lỗi để ghi log chi tiết hơn
     failed_key_name = str(failed_key_id) # Giá trị mặc định nếu không tìm thấy tên
     try:
-        failed_key_res = await supabase.table("user_provider_keys").select("name").eq("id", failed_key_id).maybe_single().execute()
+        # Xóa await ở đây
+        failed_key_res = supabase.table("user_provider_keys").select("name").eq("id", failed_key_id).maybe_single().execute()
+        # Dòng log gỡ lỗi 1 đã bị xóa
         if hasattr(failed_key_res, 'data') and failed_key_res.data and failed_key_res.data.get("name"):
             failed_key_name = failed_key_res.data["name"] or failed_key_name # Sử dụng tên nếu có, nếu không giữ lại ID
     except Exception as e:
@@ -201,7 +203,9 @@ async def attempt_automatic_failover(
     # Lấy tên của key mới được chọn
     next_key_name = str(next_key_id) # Giá trị mặc định
     try:
-        next_key_res = await supabase.table("user_provider_keys").select("name").eq("id", next_key_id).maybe_single().execute()
+        # Xóa await ở đây
+        next_key_res = supabase.table("user_provider_keys").select("name").eq("id", next_key_id).maybe_single().execute()
+        # Dòng log gỡ lỗi 2 đã bị xóa
         if hasattr(next_key_res, 'data') and next_key_res.data and next_key_res.data.get("name"):
             next_key_name = next_key_res.data["name"] or next_key_name # Sử dụng tên nếu có, nếu không giữ lại ID
     except Exception as e:
