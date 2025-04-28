@@ -69,5 +69,18 @@
      "headerActions": "Actions",
      "noDescription": "No description"
   },
+  "providerLogs": {
+    "title": "Activity Log",
+    "noLogs": "No activity logs available.",
+    "action": "Action",
+    "provider": "Provider",
+    "time": "Time",
+    "actions": {
+      "add": "Added",
+      "delete": "Deleted",
+      "select": "Selected",
+      "unselect": "Unselected"
+    }
+  },
   "translationLoading": "Loading translations..."
 }

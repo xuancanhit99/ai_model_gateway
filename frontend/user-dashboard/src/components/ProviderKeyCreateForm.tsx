@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next'; // Import useTranslation
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
-import toast from 'react-hot-toast'; // Import toast
+import toast from 'react-hot-toast';
 import {
   Box,
   Button,
@@ -18,8 +18,21 @@ import {
 } from '@mui/material';
 
 interface ProviderKeyCreateFormProps {
-  onSuccess?: () => void;
+  onSuccess: () => void;
 }
+
+// Interface cho log
+interface AddProviderKeyLogFunc {
+  (action: 'ADD', providerName: string, keyId: string | null, description?: string): Promise<void>;
+}
+
+// Tên hiển thị cho các nhà cung cấp
+const providerDisplayNames: Record<string, string> = {
+  'google': 'Google AI (Gemini)',
+  'xai': 'X.AI (Grok)',
+  'gigachat': 'GigaChat',
+  'perplexity': 'Perplexity (Sonar)'
+};
 
 const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess }) => {
   const { t } = useTranslation(); // Use the hook
@@ -27,9 +40,33 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
   const [apiKey, setApiKey] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
-  // const [error, setError] = useState<string | null>(null); // Remove error state
-  // const [success, setSuccess] = useState(false); // Remove success state
- 
+  
+  // Hàm ghi nhật ký khi thêm mới Provider Key
+  const addProviderKeyLog = async (responseData: any) => {
+    try {
+      if (!supabase || !responseData.id || !responseData.provider_name) {
+        console.error('Cannot log provider key action: Missing data', responseData);
+        return;
+      }
+      
+      // Ghi nhật ký vào bảng provider_key_logs
+      const { error } = await supabase
+        .from('provider_key_logs')
+        .insert({
+          action: 'ADD',
+          provider_name: responseData.provider_name,
+          key_id: responseData.id,
+          description: `Added new ${name ? `"${name}" ` : ''}key for ${providerDisplayNames[responseData.provider_name] || responseData.provider_name}`
+        });
+        
+      if (error) {
+        console.error('Error adding provider key log:', error);
+      }
+    } catch (error: any) {
+      console.error('Error in addProviderKeyLog:', error);
+    }
+  };
+  
   const handleProviderChange = (event: SelectChangeEvent<string>) => {
     setProvider(event.target.value);
   };
@@ -44,8 +81,6 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
     }
     
     setLoading(true);
-    // setError(null); // Remove error state reset
-    // setSuccess(false); // Remove success state reset
     
     try {
       // Check if supabase is initialized
@@ -63,7 +98,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       }
       
       // Thử gửi yêu cầu qua XMLHttpRequest để xử lý sâu hơn các vấn đề mixed content
-      return new Promise<void>((resolve, reject) => {
+      const result = await new Promise<{id?: string, provider_name?: string}>(async (resolve, reject) => {
         const xhr = new XMLHttpRequest();
         
         // Đảm bảo URL là HTTPS bằng cách sử dụng origin hiện tại và thêm dấu / ở cuối
@@ -80,20 +115,29 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
           if (xhr.status >= 200 && xhr.status < 300) {
             console.log('XHR Success:', xhr.status, xhr.statusText);
             
+            // Parse response to get key ID for logging
+            let responseData = {};
+            try {
+              responseData = JSON.parse(xhr.responseText) || {};
+            } catch (e) {
+              console.error('Error parsing response:', e);
+            }
+            
             // Reset form và thông báo thành công
             setProvider('');
             setApiKey('');
             setName('');
             toast.success(t('providerCreateForm.keyAddedSuccess')); // Show success toast
             
+            // Ghi nhật ký khi thêm key thành công
+            addProviderKeyLog(responseData);
+            
             // Call onSuccess if provided
             if (onSuccess) {
               onSuccess();
             }
             
-            // No need for timeout, toast handles its own dismissal
-            
-            resolve();
+            resolve(responseData);
           } else {
             console.error('XHR Error:', xhr.status, xhr.statusText, xhr.responseText);
             let errorMessage = `Failed with status: ${xhr.status}`;

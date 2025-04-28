@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next'; // Import useTranslation
-import { Box, Typography, Paper, Tabs, Tab } from '@mui/material';
+import { 
+  Box, 
+  Paper, 
+  Tabs, 
+  Tab
+} from '@mui/material';
 import ProviderKeyList from './ProviderKeyList';
 import ProviderKeyCreateForm from './ProviderKeyCreateForm';
 
@@ -43,33 +48,6 @@ const ProviderKeyManager: React.FC = () => {
       {activeTab === 1 && (
         <ProviderKeyCreateForm onSuccess={handleKeyCreated} />
       )}
-
-      <Paper sx={{ p: 3, mt: 4 }}>
-        {/* Use translation for the "About" section */}
-        <Typography variant="h6" gutterBottom>
-          {t('providerView.aboutTitle')}
-        </Typography>
-        <Typography variant="body2" paragraph>
-          {t('providerView.aboutIntro')}
-        </Typography>
-        <Typography variant="body2" paragraph>
-          {t('providerView.aboutBenefitsTitle')}
-        </Typography>
-        <ul>
-          <Typography component="li" variant="body2">
-            {t('providerView.aboutBenefit1')}
-          </Typography>
-          <Typography component="li" variant="body2">
-            {t('providerView.aboutBenefit2')}
-          </Typography>
-          <Typography component="li" variant="body2">
-            {t('providerView.aboutBenefit3')}
-          </Typography>
-        </ul>
-        <Typography variant="body2" paragraph sx={{ mt: 2 }}> {/* Added margin top for spacing */}
-          {t('providerView.aboutSecurity')}
-        </Typography>
-      </Paper>
     </Box>
   );
 };

@@ -69,5 +69,18 @@
      "headerActions": "Hành động",
      "noDescription": "Không có mô tả"
   },
+  "providerLogs": {
+    "title": "Nhật ký hoạt động",
+    "noLogs": "Chưa có nhật ký hoạt động nào.",
+    "action": "Hành động",
+    "provider": "Nhà cung cấp",
+    "time": "Thời gian",
+    "actions": {
+      "add": "Đã thêm",
+      "delete": "Đã xóa",
+      "select": "Đã chọn",
+      "unselect": "Đã bỏ chọn"
+    }
+  },
   "translationLoading": "Đang tải bản dịch..."
 }
