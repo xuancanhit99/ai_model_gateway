@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
@@ -16,16 +16,11 @@ import {
   Alert,
   CircularProgress,
   Chip,
-  useTheme,
   TextField,
   InputAdornment,
-  List,
-  ListItem,
-  ListItemText,
   Button,
   Card,
   CardContent,
-  CardActions,
   Collapse,
   Divider,
   Badge,
@@ -43,6 +38,7 @@ import InfoIcon from '@mui/icons-material/Info';
 import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 
 interface ProviderKey {
   id: string;
@@ -85,7 +81,204 @@ const ProviderKeyList: React.FC = () => {
   const [keyToDelete, setKeyToDelete] = useState<{id: string, providerName: string} | null>(null);
   const [providerToDeleteAll, setProviderToDeleteAll] = useState<string | null>(null);
   // const [successMessage, setSuccessMessage] = useState<string | null>(null); // Remove success message state
- 
+  // Refs cho các file inputs của từng provider
+  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  
+  // State cho tracking import progress
+  const [importing, setImporting] = useState<Record<string, boolean>>({});
+  const [importStats, setImportStats] = useState<Record<string, { total: number, success: number, failed: number } | null>>({});
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [currentImportProvider, setCurrentImportProvider] = useState<string | null>(null);
+  
+  // Hàm xử lý khi click vào nút Import CSV
+  const handleImportClick = (providerName: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Ngăn không cho event click lan đến parent
+    
+    // Kích hoạt click cho file input tương ứng
+    if (fileInputRefs.current[providerName]) {
+      fileInputRefs.current[providerName]?.click();
+    }
+  };
+  
+  // Hàm xử lý file CSV được chọn
+  const handleCsvFileChange = async (providerName: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      // Đánh dấu đang import
+      setImporting(prev => ({ ...prev, [providerName]: true }));
+      setCurrentImportProvider(providerName);
+      setImportDialogOpen(true);
+      
+      // Đọc file CSV
+      const keys = await readCsvFile(file);
+      if (keys.length === 0) {
+        throw new Error(t('providerList.importError.noKeys', 'No keys found in CSV file'));
+      }
+      
+      // Import các keys
+      const stats = await importKeysToProvider(keys, providerName);
+      
+      // Cập nhật statistics
+      setImportStats(prev => ({ ...prev, [providerName]: stats }));
+      
+      // Thông báo thành công
+      toast.success(
+        t('providerList.importSuccess', { 
+          count: stats.success,
+          provider: providerDisplayNames[providerName] || providerName 
+        })
+      );
+      
+      // Refresh danh sách keys
+      fetchProviderKeys();
+      
+      // Ghi log
+      await addProviderKeyLog(
+        'ADD',
+        providerName,
+        null,
+        `Imported ${stats.success} keys from CSV for ${providerDisplayNames[providerName] || providerName}`
+      );
+      
+    } catch (error: any) {
+      console.error('Error importing CSV:', error);
+      toast.error(`${t('providerList.importError.general', 'Error importing CSV:')} ${error.message}`);
+    } finally {
+      // Reset file input
+      if (e.target) {
+        e.target.value = '';
+      }
+      
+      // Đánh dấu kết thúc import
+      setImporting(prev => ({ ...prev, [providerName]: false }));
+    }
+  };
+  
+  // Hàm đọc file CSV
+  const readCsvFile = (file: File): Promise<{ description: string, key: string }[]> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      
+      reader.onload = (event) => {
+        try {
+          const content = event.target?.result as string;
+          if (!content) {
+            reject(new Error(t('providerList.importError.readError', 'Could not read file content')));
+            return;
+          }
+          
+          // Parse nội dung CSV
+          const lines = content.split(/\r\n|\n/).filter(line => line.trim());
+          const keys = lines.map(line => {
+            // Xử lý các trường hợp phân tách: dấu phẩy (,), dấu chấm phẩy (;), tab (\t)
+            const separator = line.includes(',') ? ',' : line.includes(';') ? ';' : '\t';
+            const parts = line.split(separator);
+            
+            // Kiểm tra nếu chỉ có 2 phần và không có phần thứ 3
+            if (parts.length === 2) {
+              return {
+                description: (parts[0] || '').trim(),
+                key: (parts[1] || '').trim()
+              };
+            }
+            
+            // Nếu có nhiều hơn 2 phần, có thể là file CSV phức tạp hơn
+            // Sẽ dùng phần đầu tiên làm description và phần thứ hai làm key
+            return {
+              description: (parts[0] || '').trim(),
+              key: (parts[1] || '').trim()
+            };
+          }).filter(item => item.key && item.key.length > 0); // Chỉ giữ lại những item có key
+          
+          resolve(keys);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      
+      reader.onerror = () => {
+        reject(new Error(t('providerList.importError.readError', 'Error reading file')));
+      };
+      
+      reader.readAsText(file);
+    });
+  };
+  
+  // Hàm import các keys vào provider
+  const importKeysToProvider = async (
+    keys: { description: string, key: string }[], 
+    providerName: string
+  ): Promise<{ total: number, success: number, failed: number }> => {
+    if (!supabase) {
+      throw new Error(t('authError', 'Supabase client not initialized'));
+    }
+    
+    const stats = { total: keys.length, success: 0, failed: 0 };
+    
+    // Sử dụng backend API endpoint thay vì trực tiếp thao tác với Supabase
+    for (const item of keys) {
+      try {
+        // Kiểm tra xem key có trống không
+        if (!item.key || item.key.trim() === '') {
+          stats.failed++;
+          continue;
+        }
+        
+        // Lấy token xác thực từ Supabase (cách lấy token mới hơn)
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        
+        if (!token) {
+          throw new Error(t('authError', 'Authentication token not available'));
+        }
+        
+        // Gọi API endpoint để tạo provider key
+        const response = await fetch('/api/v1/provider-keys/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            provider_name: providerName,
+            name: item.description || null,
+            api_key: item.key.trim()
+          })
+        });
+        
+        if (!response.ok) {
+          // Ghi log lỗi chi tiết từ API
+          const errorData = await response.json();
+          console.error('Error importing key:', errorData);
+          stats.failed++;
+          continue;
+        }
+        
+        // Đã thêm key thành công
+        const responseData = await response.json();
+        stats.success++;
+        
+        // Ghi log
+        await addProviderKeyLog(
+          'ADD',
+          providerName,
+          responseData.id,
+          `Imported key ${item.description ? `"${item.description}"` : ''} for ${providerDisplayNames[providerName] || providerName}`
+        );
+      } catch (error) {
+        console.error('Error importing key:', error);
+        stats.failed++;
+      }
+    }
+    
+    // Cập nhật danh sách sau khi import
+    fetchProviderKeys();
+    
+    return stats;
+  };
+
   // Tạo danh sách nhóm Provider từ danh sách key
   const providerGroups = React.useMemo(() => {
     // Tạo mảng các Provider keys duy nhất để hiển thị
@@ -491,7 +684,7 @@ const ProviderKeyList: React.FC = () => {
                   
                   <Collapse in={!!expandedProviders[group.providerName]}>
                     <Divider />
-                    <Box sx={{ p: 2, pb: 1 }}>
+                    <Box sx={{ p: 2, pb: 1, display: 'flex', gap: 1 }}>
                       <TextField
                         fullWidth
                         variant="outlined"
@@ -506,6 +699,31 @@ const ProviderKeyList: React.FC = () => {
                             </InputAdornment>
                           ),
                         }}
+                      />
+                      {/* Nút Import from CSV */}
+                      <IconButton
+                        size="small"
+                        onClick={(e) => handleImportClick(group.providerName, e)}
+                        color={
+                          group.providerName === 'google' ? 'primary' :
+                          group.providerName === 'xai' ? 'secondary' :
+                          group.providerName === 'gigachat' ? 'success' :
+                          group.providerName === 'perplexity' ? 'warning' : 'primary'
+                        }
+                        disabled={importing[group.providerName]}
+                        sx={{ border: 1, borderColor: 'divider', p: 1 }}
+                      >
+                        {importing[group.providerName] 
+                          ? <CircularProgress size={16} />
+                          : <InsertDriveFileIcon />}
+                      </IconButton>
+                      {/* Hidden file input cho import CSV */}
+                      <input 
+                        type="file"
+                        accept=".csv,.txt"
+                        style={{ display: 'none' }}
+                        ref={el => fileInputRefs.current[group.providerName] = el}
+                        onChange={(e) => handleCsvFileChange(group.providerName, e)}
                       />
                     </Box>
                     <TableContainer sx={{ maxHeight: 300, overflow: 'auto' }}>
@@ -550,6 +768,7 @@ const ProviderKeyList: React.FC = () => {
                   </Collapse>
                 </Card>
               ))}
+
             </Box>
           )}
         </Box>
@@ -641,7 +860,7 @@ const ProviderKeyList: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Dialog xác nhận xóa tất cả key của một provider */}
+      {/* Dialog xác nhận xóa tất cả key của một Provider */}
       <Dialog
         open={deleteAllDialogOpen}
         onClose={() => setDeleteAllDialogOpen(false)}
@@ -649,7 +868,9 @@ const ProviderKeyList: React.FC = () => {
         <DialogTitle>{t('providerList.deleteAllConfirmTitle')}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            {t('providerList.deleteAllConfirmMessage', { provider: providerToDeleteAll })}
+            {t('providerList.deleteAllConfirmMessage', { 
+              provider: providerDisplayNames[providerToDeleteAll || ''] || providerToDeleteAll 
+            })}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -657,128 +878,152 @@ const ProviderKeyList: React.FC = () => {
             {t('action.cancel')}
           </Button>
           <Button onClick={handleDeleteAllKeysForProviderConfirm} color="secondary">
-            {t('action.delete')}
+            {t('action.deleteAll')}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Dialog hiển thị kết quả import CSV */}
+      <Dialog
+        open={importDialogOpen}
+        onClose={() => {
+          if (!importing[currentImportProvider || '']) {
+            setImportDialogOpen(false);
+            setCurrentImportProvider(null);
+          }
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          {importing[currentImportProvider || ''] 
+            ? t('providerList.importingTitle', 'Importing API Keys...') 
+            : t('providerList.importResultTitle', 'Import Results')}
+        </DialogTitle>
+        <DialogContent>
+          {importing[currentImportProvider || ''] ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 2 }}>
+              <CircularProgress sx={{ mb: 2 }} />
+              <Typography>
+                {t('providerList.importingMessage', 'Processing CSV file...')}
+              </Typography>
+            </Box>
+          ) : (
+            currentImportProvider && importStats[currentImportProvider] && (
+              <Box>
+                <Typography variant="subtitle1" gutterBottom>
+                  {t('providerList.importResultSummary', 'Import Summary for {{provider}}', {
+                    provider: providerDisplayNames[currentImportProvider] || currentImportProvider
+                  })}
+                </Typography>
+
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+                  <Box sx={{ textAlign: 'center', flex: 1 }}>
+                    <Typography variant="h5">{importStats[currentImportProvider].total}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {t('providerList.importResultTotal', 'Total Keys')}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ textAlign: 'center', flex: 1 }}>
+                    <Typography variant="h5" color="success.main">{importStats[currentImportProvider].success}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {t('providerList.importResultSuccess', 'Successfully Imported')}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ textAlign: 'center', flex: 1 }}>
+                    <Typography variant="h5" color="error.main">{importStats[currentImportProvider].failed}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {t('providerList.importResultFailed', 'Failed/Duplicate')}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                {importStats[currentImportProvider].failed > 0 && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    {t('providerList.importResultFailedNote', 'Note: Failed keys may already exist or have invalid formats.')}
+                  </Alert>
+                )}
+              </Box>
+            )
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setImportDialogOpen(false);
+              setCurrentImportProvider(null);
+            }} 
+            color="primary"
+            disabled={importing[currentImportProvider || '']}
+          >
+            {t('action.close', 'Close')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Component hiển thị nhật ký Provider Keys */}
+      <Box sx={{ display: 'none' }}>This is a placeholder</Box>
     </Box>
   );
 };
 
-export const ProviderKeyLogs: React.FC<{ logs: ProviderKeyLog[], loading: boolean }> = ({ logs, loading }) => {
-  const { t } = useTranslation();
-  const [searchTerm, setSearchTerm] = useState<string>('');
-  
-  const filteredLogs = logs.filter(log => {
-    if (!searchTerm.trim()) return true;
-    
-    const searchLower = searchTerm.toLowerCase();
-    
-    // Tìm kiếm theo Action
-    if (t(`providerLogs.actions.${log.action.toLowerCase()}`, log.action).toLowerCase().includes(searchLower)) {
-      return true;
-    }
-    
-    // Tìm kiếm theo Provider
-    if ((providerDisplayNames[log.provider_name] || log.provider_name).toLowerCase().includes(searchLower)) {
-      return true;
-    }
-    
-    // Tìm kiếm theo Description
-    if (log.description.toLowerCase().includes(searchLower)) {
-      return true;
-    }
-    
-    // Tìm kiếm theo Time
-    if (new Date(log.created_at).toLocaleString().toLowerCase().includes(searchLower)) {
-      return true;
-    }
-    
-    return false;
-  });
+// Component hiển thị nhật ký
+interface ProviderKeyLogsProps {
+  logs: ProviderKeyLog[];
+  loading: boolean;
+}
 
+const ProviderKeyLogs: React.FC<ProviderKeyLogsProps> = ({ logs, loading }) => {
+  const { t } = useTranslation();
+  
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" my={2}>
-        <CircularProgress size={20} />
+        <CircularProgress size={24} />
       </Box>
     );
   }
-
+  
   if (logs.length === 0) {
     return (
-      <Alert severity="info" sx={{ mt: 2 }}>
-        {t('providerLogs.noLogs', 'No activity logs available.')}
+      <Alert severity="info">
+        {t('providerLogs.noLogs', 'No recent activity with provider keys.')}
       </Alert>
     );
   }
-
+  
   return (
-    <Box>
-      <Box sx={{ mb: 2 }}>
-        <TextField
-          fullWidth
-          variant="outlined"
-          size="small"
-          placeholder={t('providerLogs.search', 'Search logs by action, provider, description or time...')}
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" />
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Box>
-      
-      {searchTerm && filteredLogs.length === 0 ? (
-        <Alert severity="info">
-          {t('providerLogs.noSearchResults', 'No logs matching your search.')}
-        </Alert>
-      ) : (
-        <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{t('providerLogs.action', 'Action')}</TableCell>
-                <TableCell>{t('providerLogs.provider', 'Provider')}</TableCell>
-                <TableCell>{t('providerLogs.description', 'Description')}</TableCell>
-                <TableCell>{t('providerLogs.time', 'Time')}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredLogs.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell>
-                    <Chip 
-                      label={t(`providerLogs.actions.${log.action.toLowerCase()}`, log.action)}
-                      color={
-                        log.action === 'ADD' ? 'success' :
-                        log.action === 'DELETE' ? 'error' :
-                        log.action === 'SELECT' ? 'primary' : 
-                        'default'
-                      }
-                      size="small"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    {providerDisplayNames[log.provider_name] || log.provider_name}
-                  </TableCell>
-                  <TableCell>
-                    {log.description || `${log.action} key for ${providerDisplayNames[log.provider_name] || log.provider_name}`}
-                  </TableCell>
-                  <TableCell>
-                    {new Date(log.created_at).toLocaleString()}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
-    </Box>
+    <TableContainer component={Paper} sx={{ maxHeight: 250 }}>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>{t('providerLogs.action', 'Action')}</TableCell>
+            <TableCell>{t('providerLogs.description', 'Description')}</TableCell>
+            <TableCell>{t('providerLogs.time', 'Time')}</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {logs.map((log) => (
+            <TableRow key={log.id}>
+              <TableCell>
+                <Chip
+                  label={log.action}
+                  size="small"
+                  color={
+                    log.action === 'ADD' ? 'success' :
+                    log.action === 'DELETE' ? 'error' :
+                    log.action === 'SELECT' ? 'primary' :
+                    log.action === 'UNSELECT' ? 'warning' : 'default'
+                  }
+                />
+              </TableCell>
+              <TableCell>{log.description}</TableCell>
+              <TableCell>{new Date(log.created_at).toLocaleString()}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 };
 

@@ -21,11 +21,6 @@ interface ProviderKeyCreateFormProps {
   onSuccess: () => void;
 }
 
-// Interface cho log
-interface AddProviderKeyLogFunc {
-  (action: 'ADD', providerName: string, keyId: string | null, description?: string): Promise<void>;
-}
-
 // Tên hiển thị cho các nhà cung cấp
 const providerDisplayNames: Record<string, string> = {
   'google': 'Google AI (Gemini)',
@@ -98,7 +93,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       }
       
       // Thử gửi yêu cầu qua XMLHttpRequest để xử lý sâu hơn các vấn đề mixed content
-      const result = await new Promise<{id?: string, provider_name?: string}>(async (resolve, reject) => {
+      await new Promise<{id?: string, provider_name?: string}>(async (resolve, reject) => {
         const xhr = new XMLHttpRequest();
         
         // Đảm bảo URL là HTTPS bằng cách sử dụng origin hiện tại và thêm dấu / ở cuối
