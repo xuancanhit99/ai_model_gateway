@@ -9,7 +9,6 @@ import {
   DialogActions,
   TextField,
   Button,
-  FormHelperText,
   Box,
   CircularProgress
 } from '@mui/material';
@@ -145,7 +144,7 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
               // Ignore parse error
             }
             // Use toast.error instead of rejecting with Error for UI feedback
-            toast.error(t('providerCreateForm.httpError', 'Error: {{message}}', { message: errorMessage }, errorMessage));
+            toast.error(t('providerCreateForm.httpError', 'Error: {{message}}', { message: errorMessage }));
             // Still reject the promise for internal handling if needed, but UI error is shown via toast
             reject(new Error(errorMessage));
           }

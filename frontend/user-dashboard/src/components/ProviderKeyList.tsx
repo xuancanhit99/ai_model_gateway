@@ -161,9 +161,9 @@ const ProviderKeyList: React.FC = () => {
 
       if (newIsSelectedValue) {
         await supabase.from('user_provider_keys').update({ is_selected: false }).eq('provider_name', providerName);
-        successMsg = t('providerList.selectSuccess', { provider: providerDisplayNames[providerName] || providerName }, `Set "${providerDisplayNames[providerName] || providerName}" key as default`);
+        successMsg = t('providerList.selectSuccess', { provider: providerDisplayNames[providerName] || providerName });
       } else {
-        successMsg = t('providerList.unselectSuccess', { provider: providerDisplayNames[providerName] || providerName }, `Removed "${providerDisplayNames[providerName] || providerName}" key from default`);
+        successMsg = t('providerList.unselectSuccess', { provider: providerDisplayNames[providerName] || providerName });
       }
 
       const { error: updateError } = await supabase.from('user_provider_keys').update({ is_selected: newIsSelectedValue }).eq('id', keyId);
@@ -181,7 +181,7 @@ const ProviderKeyList: React.FC = () => {
       fetchProviderKeys();
     } catch (err: any) {
       console.error('Error updating provider key selection:', err);
-      toast.error(t('providerList.updateSelectionError', 'Error updating selection: {{message}}', { message: err.message }, `Error updating selection: ${err.message}`));
+      toast.error(t('providerList.updateSelectionError', 'Error updating selection: {{message}}', { message: err.message }));
     }
   };
 
@@ -200,7 +200,7 @@ const ProviderKeyList: React.FC = () => {
       const { error: deleteError } = await supabase.from('user_provider_keys').delete().eq('id', id);
       if (deleteError) throw deleteError;
 
-      toast.success(t('providerList.deleteSuccess', { provider: providerDisplayNames[providerName] || providerName }, `Successfully deleted key for ${providerDisplayNames[providerName] || providerName}`));
+      toast.success(t('providerList.deleteSuccess', { provider: providerDisplayNames[providerName] || providerName }));
       await addProviderKeyLog(
         'DELETE',
         providerName,
@@ -210,7 +210,7 @@ const ProviderKeyList: React.FC = () => {
       fetchProviderKeys();
     } catch (err: any) {
       console.error('Error deleting provider key:', err);
-      toast.error(t('providerList.deleteError', 'Error deleting key: {{message}}', { message: err.message }, `Error deleting key: ${err.message}`));
+      toast.error(t('providerList.deleteError', 'Error deleting key: {{message}}', { message: err.message }));
     } finally {
       setDeleteDialogOpen(false);
       setKeyToDelete(null);
@@ -231,10 +231,7 @@ const ProviderKeyList: React.FC = () => {
       const { error: deleteError } = await supabase.from('user_provider_keys').delete().eq('provider_name', providerName);
       if (deleteError) throw deleteError;
 
-      toast.success(t('providerList.deleteAllSuccess', 
-        { provider: providerDisplayNames[providerName] || providerName }, 
-        `Successfully deleted all keys for ${providerDisplayNames[providerName] || providerName}`
-      ));
+      toast.success(t('providerList.deleteAllSuccess', { provider: providerDisplayNames[providerName] || providerName }));
       await addProviderKeyLog(
         'DELETE',
         providerName,
@@ -244,11 +241,7 @@ const ProviderKeyList: React.FC = () => {
       fetchProviderKeys();
     } catch (err: any) {
       console.error(`Error deleting all keys for ${providerName}:`, err);
-      toast.error(t('providerList.deleteAllError', 
-        'Error deleting keys: {{message}}', 
-        { message: err.message }, 
-        `Error deleting keys: ${err.message}`
-      ));
+      toast.error(t('providerList.deleteAllError', 'Error deleting keys: {{message}}', { message: err.message }));
     } finally {
       setDeleteAllDialogOpen(false);
       setProviderToDeleteAll(null);
@@ -285,10 +278,7 @@ const ProviderKeyList: React.FC = () => {
       const stats = await importKeysToProvider(keys, providerName);
       setImportStats(prev => ({ ...prev, [providerName]: stats }));
 
-      toast.success(t('providerList.importSuccess', 
-        { count: stats.success, provider: providerDisplayNames[providerName] || providerName }, 
-        `Successfully imported ${stats.success} keys for ${providerDisplayNames[providerName] || providerName}`
-      ));
+      toast.success(t('providerList.importSuccess', { count: stats.success, provider: providerDisplayNames[providerName] || providerName }));
       fetchProviderKeys(); // Refresh list after import
       await addProviderKeyLog('ADD', providerName, null, `Imported ${stats.success} keys from CSV for ${providerDisplayNames[providerName] || providerName}`);
 
