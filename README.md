@@ -22,6 +22,9 @@ Key features:
 - Image-to-text extraction
 - Streaming responses
 - Health monitoring
+- Provider API Key Management (Store, manage, and import keys via UI)
+- **Automatic API Key Failover**: Automatically rotates to the next available key upon encountering specific API errors (e.g., 401, 429).
+- **Activity Logging**: Tracks key management actions (add, delete, select, import) and failover events.
 
 ## 🚀 Quick Start
 
@@ -115,6 +118,8 @@ The service provides the following main endpoints:
 - **Text Extraction from Images**: `/api/v1/vision/extract-text`
 - **OpenAI-Compatible Chat Completions**: `/v1/chat/completions`
 - **OpenAI-Compatible Models List**: `/v1/models`
+- **Provider Key Management**: `/api/v1/provider-keys`
+- **Activity Logs**: `/api/v1/activity-logs`
 
 ## 🤖 Available Models
 
@@ -139,6 +144,61 @@ The service supports multiple models from different providers:
 - And others...
 
 For a complete list of supported models, use the `/v1/models` endpoint.
+
+## ✨ How It Works (Key Failover)
+
+When making requests through the OpenAI-compatible endpoints (`/v1/chat/completions`) or the specific gateway endpoints (`/api/v1/chat/generate-text`, `/api/v1/vision/extract-text`):
+
+1.  **Key Prioritization**: The gateway prioritizes API keys in this order:
+    1.  Key provided in the request header (e.g., `X-Google-API-Key`).
+    2.  The user's currently *selected* key for that provider (managed via the UI).
+    3.  The fallback key defined in the `.env` file (if any).
+2.  **Error Detection**: If the chosen key results in an API error indicative of a key issue (e.g., 401 Unauthorized, 403 Forbidden, 429 Too Many Requests), the failover mechanism is triggered.
+3.  **Automatic Rotation**:
+    *   The failing key is marked (temporarily disabled for 429 errors).
+    *   The system attempts to find the *next available* (not disabled) key for that provider belonging to the user, rotating based on creation order.
+    *   The newly found key is automatically selected (`is_selected` = true in the database).
+4.  **Retry**: The original API request is retried using the newly selected key.
+5.  **Exhaustion**: If all available keys for a provider fail consecutively, a 503 Service Unavailable error is returned.
+6.  **Logging**: All failover events (key unselected due to error, new key selected, exhaustion) are recorded in the Activity Log.
+
+This ensures higher availability and resilience by automatically handling temporary key issues or invalid keys.
+
+## 📜 Activity Log
+
+The gateway logs important events related to provider key management:
+- Manual actions via UI: Add, Delete, Select/Unselect, Import keys.
+- System actions: Automatic key selection/unselection during failover, key exhaustion events.
+
+Logs can be viewed in the "Activity Log" section of the user dashboard.
+
+## 🏗️ Project Structure
+
+```
+.
+├── app/                  # Backend FastAPI application
+│   ├── api/              # API endpoints (routes)
+│   ├── core/             # Core components (auth, config, db client, utils)
+│   ├── models/           # Pydantic models (schemas)
+│   └── services/         # Business logic, external service interactions (AI models)
+├── docs/                 # API documentation files (Markdown)
+├── frontend/             # Frontend React application (User Dashboard)
+│   └── user-dashboard/
+│       ├── public/       # Static assets, locales
+│       └── src/          # React source code
+│           ├── assets/
+│           ├── components/ # Reusable UI components
+│           ├── services/   # Frontend API interaction logic (if any)
+│           ├── styles/     # CSS, styling
+│           └── ...         # Main app, routing, state management
+├── .env.example          # Example environment variables
+├── compose.yaml          # Docker Compose configuration
+├── Dockerfile            # Main backend Dockerfile
+├── main.py               # FastAPI application entry point
+├── requirements.txt      # Backend Python dependencies
+├── README.md             # This file
+└── README.vi.md          # Vietnamese README
+```
 
 ## 🔒 Security
 

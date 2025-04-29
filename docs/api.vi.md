@@ -8,9 +8,11 @@ Tài liệu này cung cấp thông tin chi tiết về các endpoint API của A
 - [Kiểm tra trạng thái](#kiểm-tra-trạng-thái)
 - [Tạo văn bản](#tạo-văn-bản)
 - [Vision (Trích xuất văn bản)](#vision-trích-xuất-văn-bản)
+- [Quản lý Khóa Nhà cung cấp](#quản-lý-khóa-nhà-cung-cấp)
 - [Các Endpoint tương thích OpenAI](#các-endpoint-tương-thích-openai)
   - [Chat Completions](#chat-completions)
   - [Danh sách mô hình](#danh-sách-mô-hình)
+- [Nhật ký Hoạt động](#nhật-ký-hoạt-động)
 
 ## 🔐 Xác thực
 
@@ -29,7 +31,9 @@ X-GigaChat-API-Key: YOUR_GIGACHAT_API_KEY
 X-Perplexity-API-Key: YOUR_PERPLEXITY_API_KEY
 ```
 
-Nếu không được cung cấp, dịch vụ sẽ sử dụng các API key được chỉ định trong file `.env`.
+Nếu không được cung cấp, dịch vụ sẽ cố gắng sử dụng khóa đã chọn của người dùng cho nhà cung cấp đó (quản lý qua giao diện người dùng) hoặc sử dụng các API key được chỉ định trong file `.env`.
+
+**Lưu ý về Failover**: Đối với các endpoint tương tác với mô hình AI (Tạo văn bản, Vision, Chat Completions), gateway triển khai cơ chế tự động chuyển đổi dự phòng (failover) khóa API. Nếu khóa được chọn ban đầu thất bại với các lỗi cụ thể (ví dụ: 401, 429), hệ thống sẽ tự động thử khóa khả dụng tiếp theo cho nhà cung cấp đó được liên kết với tài khoản của bạn. Xem tệp README chính để biết thêm chi tiết về logic failover.
 
 ## ❤️‍🩹 Kiểm tra trạng thái
 
@@ -127,7 +131,210 @@ Trích xuất văn bản từ hình ảnh sử dụng các mô hình vision.
 }
 ```
 
-## 🔄 Các Endpoint tương thích OpenAI
+## 🔑 Quản lý Khóa Nhà cung cấp
+
+Quản lý các khóa API cho các nhà cung cấp AI khác nhau (Google, xAI, GigaChat, Perplexity) được liên kết với tài khoản người dùng của bạn. Các khóa này được lưu trữ an toàn (mã hóa) và có thể được gateway sử dụng khi thực hiện yêu cầu đến các nhà cung cấp tương ứng nếu khóa cụ thể không được cung cấp trong header yêu cầu hoặc được cấu hình chung trong tệp `.env`. Gateway ưu tiên các khóa theo thứ tự sau: Header > Khóa Nhà cung cấp được chọn > Khóa trong `.env`.
+
+**Endpoint Cơ sở**: `/api/v1/provider-keys`
+
+**Xác thực**: Yêu cầu (`Authorization: Bearer sk-...`) cho tất cả các endpoint trong phần này.
+
+---
+
+### Tạo Khóa Nhà cung cấp
+
+Thêm một khóa API mới cho một nhà cung cấp cụ thể.
+
+**Endpoint**: `POST /`
+
+**Body của Request**:
+```json
+{
+  "provider_name": "google",
+  "api_key": "YOUR_PROVIDER_API_KEY",
+  "name": "Khóa Google cá nhân của tôi"
+}
+```
+
+**Các tham số**:
+- `provider_name` (chuỗi, bắt buộc): Tên của nhà cung cấp (ví dụ: "google", "xai", "gigachat", "perplexity").
+- `api_key` (chuỗi, bắt buộc): Khóa API thực tế từ nhà cung cấp. Khóa này sẽ được mã hóa trước khi lưu trữ.
+- `name` (chuỗi, tùy chọn): Tên mô tả cho khóa (ví dụ: "Khóa Công việc", "Khóa Thử nghiệm").
+
+**Ví dụ phản hồi (201 Created)**:
+```json
+{
+  "id": "pk_abc123xyz789",
+  "provider_name": "google",
+  "name": "Khóa Google cá nhân của tôi",
+  "is_selected": false,
+  "created_at": "2025-04-29T19:55:00.123Z"
+}
+```
+
+---
+
+### Liệt kê Khóa Nhà cung cấp
+
+Truy xuất tất cả các khóa nhà cung cấp được liên kết với tài khoản của bạn, có thể lọc theo nhà cung cấp.
+
+**Endpoint**: `GET /`
+
+**Tham số Query**:
+- `provider` (chuỗi, tùy chọn): Lọc khóa theo tên nhà cung cấp (ví dụ: `?provider=google`).
+
+**Ví dụ phản hồi**:
+```json
+[
+  {
+    "id": "pk_abc123xyz789",
+    "provider_name": "google",
+    "name": "Khóa Google cá nhân của tôi",
+    "is_selected": false,
+    "created_at": "2025-04-29T19:55:00.123Z"
+  },
+  {
+    "id": "pk_def456uvw456",
+    "provider_name": "xai",
+    "name": "Khóa Grok Dev",
+    "is_selected": true,
+    "created_at": "2025-04-28T10:10:10.000Z"
+  }
+  // ... các khóa khác
+]
+```
+
+---
+
+### Lấy Khóa Nhà cung cấp Cụ thể
+
+Truy xuất chi tiết cho một khóa nhà cung cấp duy nhất bằng ID của nó.
+
+**Endpoint**: `GET /{key_id}`
+
+**Tham số Path**:
+- `key_id` (chuỗi, bắt buộc): ID duy nhất của khóa nhà cung cấp.
+
+**Ví dụ phản hồi**:
+```json
+{
+  "id": "pk_abc123xyz789",
+  "provider_name": "google",
+  "name": "Khóa Google cá nhân của tôi",
+  "is_selected": false,
+  "created_at": "2025-04-29T19:55:00.123Z"
+}
+```
+
+---
+
+### Cập nhật Khóa Nhà cung cấp
+
+Cập nhật tên hoặc trạng thái lựa chọn của khóa nhà cung cấp. Đặt `is_selected` thành `true` sẽ tự động bỏ chọn bất kỳ khóa nào khác hiện đang được chọn cho cùng một nhà cung cấp.
+
+**Endpoint**: `PATCH /{key_id}`
+
+**Tham số Path**:
+- `key_id` (chuỗi, bắt buộc): ID duy nhất của khóa nhà cung cấp cần cập nhật.
+
+**Body của Request**:
+```json
+{
+  "name": "Tên Khóa Google đã cập nhật",
+  "is_selected": true
+}
+```
+
+**Các tham số**:
+- `name` (chuỗi, tùy chọn): Tên mô tả mới cho khóa.
+- `is_selected` (boolean, tùy chọn): Đặt thành `true` để đặt khóa này làm mặc định cho nhà cung cấp, ngược lại là `false`.
+
+**Ví dụ phản hồi**:
+```json
+{
+  "id": "pk_abc123xyz789",
+  "provider_name": "google",
+  "name": "Tên Khóa Google đã cập nhật",
+  "is_selected": true,
+  "created_at": "2025-04-29T19:55:00.123Z"
+}
+```
+
+---
+
+### Xóa Khóa Nhà cung cấp
+
+Xóa một khóa nhà cung cấp cụ thể.
+
+**Endpoint**: `DELETE /{key_id}`
+
+**Tham số Path**:
+- `key_id` (chuỗi, bắt buộc): ID duy nhất của khóa nhà cung cấp cần xóa.
+
+**Phản hồi**: `204 No Content` khi thành công.
+
+---
+
+### Xóa Tất cả Khóa cho một Nhà cung cấp
+
+Xóa tất cả các khóa được liên kết với một nhà cung cấp cụ thể cho tài khoản của bạn.
+
+**Endpoint**: `DELETE /`
+
+**Tham số Query**:
+- `provider_name` (chuỗi, bắt buộc): Tên của nhà cung cấp có khóa cần xóa (ví dụ: `?provider_name=google`).
+
+**Phản hồi**: `204 No Content` khi thành công.
+
+---
+
+## 📜 Nhật ký Hoạt động
+
+Truy xuất các bản ghi nhật ký hoạt động gần đây liên quan đến quản lý khóa nhà cung cấp cho người dùng đã xác thực. Điều này bao gồm các hành động thủ công (thêm, xóa, chọn, nhập) và các sự kiện hệ thống tự động (hành động failover).
+
+**Endpoint**: `GET /api/v1/activity-logs`
+
+**Xác thực**: Yêu cầu (`Authorization: Bearer sk-...`)
+
+**Tham số Query**:
+- `limit` (số nguyên, tùy chọn, mặc định: 50): Số lượng bản ghi nhật ký tối đa cần trả về.
+
+**Ví dụ phản hồi**:
+```json
+[
+  {
+    "id": "log_uuid_1",
+    "user_id": "user_uuid",
+    "action": "SELECT",
+    "provider_name": "google",
+    "key_id": "pk_abc123xyz789",
+    "description": "Đã chọn khóa \"Khóa Google cá nhân của tôi\" bằng failover tự động từ khóa \"Khóa Google cũ\"",
+    "created_at": "2025-04-29T20:15:30.123Z"
+  },
+  {
+    "id": "log_uuid_2",
+    "user_id": "user_uuid",
+    "action": "UNSELECT",
+    "provider_name": "google",
+    "key_id": "pk_oldkey456",
+    "description": "Khóa 'Khóa Google cũ' bị bỏ chọn do lỗi 429: Vượt quá giới hạn tần suất",
+    "created_at": "2025-04-29T20:15:29.987Z"
+  },
+  {
+    "id": "log_uuid_3",
+    "user_id": "user_uuid",
+    "action": "ADD",
+    "provider_name": "xai",
+    "key_id": "pk_def456uvw456",
+    "description": "Đã thêm khóa \"Khóa Grok Dev\" cho X.AI (Grok)",
+    "created_at": "2025-04-29T18:05:00.000Z"
+  }
+  // ... các bản ghi khác cho đến giới hạn
+]
+```
+
+---
+##  Các Endpoint tương thích OpenAI
 
 ### 🤖 Chat Completions
 

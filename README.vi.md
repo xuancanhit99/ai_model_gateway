@@ -22,6 +22,9 @@ Tính năng chính:
 - Trích xuất văn bản từ hình ảnh
 - Phản hồi dạng streaming
 - Giám sát trạng thái
+- Quản lý Khóa API Nhà cung cấp (Lưu trữ, quản lý và nhập khóa qua giao diện người dùng)
+- **Tự động chuyển đổi dự phòng (Failover) Khóa API**: Tự động xoay vòng sang khóa khả dụng tiếp theo khi gặp lỗi API cụ thể (ví dụ: 401, 429).
+- **Ghi Nhật ký Hoạt động**: Theo dõi các hành động quản lý khóa (thêm, xóa, chọn, nhập) và các sự kiện failover.
 
 ## 🚀 Bắt đầu nhanh
 
@@ -120,6 +123,8 @@ Dịch vụ cung cấp các endpoint chính sau:
 - **Trích xuất văn bản từ hình ảnh**: `/api/v1/vision/extract-text`
 - **Chat Completions tương thích OpenAI**: `/v1/chat/completions`
 - **Danh sách mô hình tương thích OpenAI**: `/v1/models`
+- **Quản lý Khóa Nhà cung cấp**: `/api/v1/provider-keys`
+- **Nhật ký Hoạt động**: `/api/v1/activity-logs`
 
 ## 🤖 Các mô hình có sẵn
 
@@ -152,6 +157,61 @@ Dịch vụ hỗ trợ nhiều mô hình từ các nhà cung cấp khác nhau:
 - r1-1776
 
 Để xem danh sách đầy đủ các mô hình được hỗ trợ, sử dụng endpoint `/v1/models`.
+
+## ✨ Cách hoạt động (Failover Khóa)
+
+Khi thực hiện yêu cầu thông qua các endpoint tương thích OpenAI (`/v1/chat/completions`) hoặc các endpoint gateway cụ thể (`/api/v1/chat/generate-text`, `/api/v1/vision/extract-text`):
+
+1.  **Ưu tiên Khóa**: Gateway ưu tiên các khóa API theo thứ tự sau:
+    1.  Khóa được cung cấp trong header của yêu cầu (ví dụ: `X-Google-API-Key`).
+    2.  Khóa hiện đang được *chọn* của người dùng cho nhà cung cấp đó (quản lý qua giao diện người dùng).
+    3.  Khóa dự phòng được định nghĩa trong tệp `.env` (nếu có).
+2.  **Phát hiện Lỗi**: Nếu khóa được chọn gây ra lỗi API cho thấy vấn đề về khóa (ví dụ: 401 Unauthorized, 403 Forbidden, 429 Too Many Requests), cơ chế failover sẽ được kích hoạt.
+3.  **Tự động Xoay vòng**:
+    *   Khóa bị lỗi sẽ được đánh dấu (tạm thời vô hiệu hóa đối với lỗi 429).
+    *   Hệ thống cố gắng tìm khóa *khả dụng tiếp theo* (không bị vô hiệu hóa) cho nhà cung cấp đó thuộc về người dùng, xoay vòng dựa trên thứ tự tạo.
+    *   Khóa mới tìm thấy sẽ tự động được chọn (`is_selected` = true trong cơ sở dữ liệu).
+4.  **Thử lại**: Yêu cầu API ban đầu được thử lại bằng khóa mới được chọn.
+5.  **Cạn kiệt**: Nếu tất cả các khóa khả dụng cho một nhà cung cấp đều bị lỗi liên tiếp, lỗi 503 Service Unavailable sẽ được trả về.
+6.  **Ghi Log**: Tất cả các sự kiện failover (khóa bị bỏ chọn do lỗi, khóa mới được chọn, cạn kiệt khóa) đều được ghi lại trong Nhật ký Hoạt động.
+
+Điều này đảm bảo tính sẵn sàng và khả năng phục hồi cao hơn bằng cách tự động xử lý các sự cố khóa tạm thời hoặc khóa không hợp lệ.
+
+## 📜 Nhật ký Hoạt động
+
+Gateway ghi lại các sự kiện quan trọng liên quan đến quản lý khóa nhà cung cấp:
+- Hành động thủ công qua UI: Thêm, Xóa, Chọn/Bỏ chọn, Nhập khóa.
+- Hành động hệ thống: Tự động chọn/bỏ chọn khóa trong quá trình failover, sự kiện cạn kiệt khóa.
+
+Nhật ký có thể được xem trong phần "Nhật ký Hoạt động" của bảng điều khiển người dùng.
+
+## 🏗️ Cấu trúc Dự án
+
+```
+.
+├── app/                  # Ứng dụng backend FastAPI
+│   ├── api/              # Các endpoint API (routes)
+│   ├── core/             # Các thành phần cốt lõi (auth, config, db client, utils)
+│   ├── models/           # Các model Pydantic (schemas)
+│   └── services/         # Logic nghiệp vụ, tương tác dịch vụ bên ngoài (mô hình AI)
+├── docs/                 # Các tệp tài liệu API (Markdown)
+├── frontend/             # Ứng dụng frontend React (Bảng điều khiển người dùng)
+│   └── user-dashboard/
+│       ├── public/       # Tài sản tĩnh, bản địa hóa
+│       └── src/          # Mã nguồn React
+│           ├── assets/
+│           ├── components/ # Các component UI tái sử dụng
+│           ├── services/   # Logic tương tác API frontend (nếu có)
+│           ├── styles/     # CSS, styling
+│           └── ...         # App chính, routing, quản lý state
+├── .env.example          # Biến môi trường mẫu
+├── compose.yaml          # Cấu hình Docker Compose
+├── Dockerfile            # Dockerfile backend chính
+├── main.py               # Điểm vào ứng dụng FastAPI
+├── requirements.txt      # Các gói phụ thuộc Python backend
+├── README.md             # README tiếng Anh
+└── README.vi.md          # README tiếng Việt (tệp này)
+```
 
 ## 🔒 Bảo mật
 
