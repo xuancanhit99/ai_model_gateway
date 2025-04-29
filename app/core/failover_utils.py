@@ -63,7 +63,8 @@ async def attempt_automatic_failover(
         try:
             disable_time = datetime.now(timezone.utc) + timedelta(minutes=DISABLE_DURATION_MINUTES)
             # Sử dụng await cho các hoạt động I/O với Supabase
-            update_res = await supabase.table("user_provider_keys").update(
+            # Gỡ bỏ await vì .execute() có thể không phải là async
+            update_res = supabase.table("user_provider_keys").update(
                 {"disabled_until": disable_time.isoformat()}
             ).eq("id", failed_key_id).execute()
             # Kiểm tra kết quả trả về từ Supabase (có thể khác nhau tùy phiên bản client)
@@ -185,9 +186,10 @@ async def attempt_automatic_failover(
     try:
         # Bỏ chọn key cũ
         # Gỡ bỏ await vì update().execute() là đồng bộ
+        # Gỡ bỏ await (nếu có) vì update().execute() có thể là đồng bộ
         supabase.table("user_provider_keys").update({"is_selected": False}).eq("id", failed_key_id).execute()
         # Chọn key mới
-        # Gỡ bỏ await vì update().execute() là đồng bộ
+        # Gỡ bỏ await (nếu có) vì update().execute() có thể là đồng bộ
         supabase.table("user_provider_keys").update({"is_selected": True}).eq("id", next_key_id).execute()
         logger.info(f"Successfully switched selected key from {failed_key_id} to {next_key_id}")
     except Exception as e:
