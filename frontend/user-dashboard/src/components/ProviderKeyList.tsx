@@ -680,8 +680,8 @@ const ProviderKeyList: React.FC = () => {
           </Box>
         </Box>
 
-        {/* Right Column: About Section */}
-        <Box sx={{ flex: '3', minWidth: 250 }}>
+        {/* Right Column: About Section - Align to top */}
+        <Box sx={{ flex: '3', minWidth: 250, alignSelf: 'flex-start' }}>
           <AboutProviderKeys />
         </Box>
       </Box>
