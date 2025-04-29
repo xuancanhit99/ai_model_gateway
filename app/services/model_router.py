@@ -9,7 +9,7 @@ from app.services.gemini import GeminiService
 from app.services.grok import GrokService
 from app.services.gigachat import GigaChatService
 from app.services.sonar import SonarService
-from app.models.schemas import ChatMessage
+from app.models.schemas import ChatMessage, ErrorResponse, OpenAIErrorDetail # Import Error Schemas
 import time
 import uuid
 import logging
@@ -25,6 +25,37 @@ logger = logging.getLogger(__name__) # Thêm logger
 
 class ModelRouter:
     """Lớp chịu trách nhiệm định tuyến các yêu cầu đến mô hình AI thích hợp."""
+
+    @staticmethod
+    def _map_error_to_openai(status_code: int, message: str) -> OpenAIErrorDetail:
+        """Maps HTTP status code and message to OpenAI error structure."""
+        error_type = "api_error" # Default
+        error_code_str = None
+        if status_code == 400:
+            error_type = "invalid_request_error"
+        elif status_code == 401:
+            error_type = "authentication_error"
+            error_code_str = "invalid_api_key"
+        elif status_code == 403:
+            error_type = "authentication_error"
+            error_code_str = "permission_denied" # Or specific code if known
+        elif status_code == 404:
+            error_type = "invalid_request_error"
+            error_code_str = "model_not_found"
+        elif status_code == 429:
+            error_type = "rate_limit_error"
+            error_code_str = "rate_limit_exceeded"
+        elif status_code == 503:
+            error_type = "api_error" # Or service_unavailable? OpenAI uses api_error often
+            error_code_str = "service_unavailable"
+
+        # Clean up message slightly if it contains structure info like "ValueError: ..."
+        clean_message = message.split(': ', 1)[-1] if ': ' in message else message
+        clean_message = clean_message.split(' - ')[-1] if ' - ' in message else clean_message
+
+
+        return OpenAIErrorDetail(message=clean_message, type=error_type, code=error_code_str)
+
 
     @staticmethod
     def _strip_provider_prefix(model_id: str) -> str:
@@ -84,10 +115,10 @@ class ModelRouter:
 
         if not provider_key_name:
             logger.error(f"Provider '{provider_name}' determined for model '{model}' does not support vision tasks or mapping failed.")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Model '{model}' belongs to provider '{provider_name}' which does not support vision extraction or is not configured for failover."
-            )
+            # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+            error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_400_BAD_REQUEST, f"Model '{model}' belongs to provider '{provider_name}' which does not support vision extraction or is not configured for failover.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ErrorResponse(error=error_detail_obj))
+            # --- Kết thúc sửa đổi ---
 
         # --- Lấy ID của key ban đầu ---
         initial_key_id: Optional[str] = None
@@ -105,7 +136,10 @@ class ModelRouter:
                 logger.warning(f"Vision: No initial selected key found for user {user_id}, provider {provider_key_name}.")
         except Exception as e:
             logger.exception(f"Vision: Error fetching initial key ID for user {user_id}, provider {provider_key_name}: {e}")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve initial key information for vision.")
+            # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+            error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to retrieve initial key information for vision.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=ErrorResponse(error=error_detail_obj))
+            # --- Kết thúc sửa đổi ---
 
         # --- Logic Gọi API và Failover ---
         current_api_key = provider_api_keys.get(provider_key_name)
@@ -152,7 +186,10 @@ class ModelRouter:
                     next_key_id = new_key_info['id']
                     if next_key_id in tried_key_ids:
                         logger.error(f"Vision: Failover returned an already tried key ({next_key_id}). Exhausted.")
-                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                        # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                        error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, "All available provider keys failed or are temporarily disabled (cycle detected).")
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                        # --- Kết thúc sửa đổi ---
                     else:
                         current_key_id = next_key_id
                         current_api_key = new_key_info['api_key']
@@ -160,7 +197,10 @@ class ModelRouter:
                         logger.info(f"Vision: Failover selected initial/next key: {current_key_id}")
                 else:
                     logger.error(f"Vision: Failover could not find any usable key for provider {provider_key_name}.")
-                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"No usable API key available for provider {provider_key_name}.")
+                    # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                    error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, f"No usable API key available for provider {provider_key_name}.")
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                    # --- Kết thúc sửa đổi ---
 
             # --- Thực hiện gọi API với key hiện tại ---
             display_key_id = current_key_id if current_key_id else "unknown" # Sửa đổi để xử lý None
@@ -177,10 +217,13 @@ class ModelRouter:
                         if guessed_type in settings.GEMINI_ALLOWED_CONTENT_TYPES:
                             mime_type = guessed_type
                         else:
-                            raise HTTPException(
-                                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                                detail=f"Unsupported image type '{mime_type}' for Gemini. Allowed: {', '.join(settings.GEMINI_ALLOWED_CONTENT_TYPES)}"
-                            )
+                            # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                            fail_msg = f"Unsupported image type '{mime_type}' for Gemini. Allowed: {', '.join(settings.GEMINI_ALLOWED_CONTENT_TYPES)}"
+                            error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, fail_msg)
+                            # Note: OpenAI doesn't have a specific code for 415, using invalid_request_error might be suitable
+                            error_detail_obj.type = "invalid_request_error"
+                            raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=ErrorResponse(error=error_detail_obj))
+                            # --- Kết thúc sửa đổi ---
                     service = GeminiService(api_key=current_api_key, model=base_model_name)
                     extracted_text, _ = await service.extract_text(image_data=image_bytes, content_type=mime_type, prompt=prompt)
                     logger.info(f"Vision: Successfully extracted text using key {display_key_id}")
@@ -194,7 +237,10 @@ class ModelRouter:
                     return extracted_text, original_model_name
 
                 logger.error(f"Internal vision routing error after check: Unhandled provider '{provider_key_name}'")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during vision model routing.")
+                # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error during vision model routing.")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=ErrorResponse(error=error_detail_obj))
+                # --- Kết thúc sửa đổi ---
 
             # --- Xử lý lỗi và Failover ---
             except (HTTPException, ValueError) as e:
@@ -218,7 +264,10 @@ class ModelRouter:
                         logger.warning(f"Vision: Caught ValueError indicating invalid API key: {error_message}")
                     else:
                          logger.exception(f"Vision: Caught non-key ValueError: {e}")
-                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid value encountered: {e}")
+                         # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                         error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_400_BAD_REQUEST, f"Invalid value encountered: {e}")
+                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ErrorResponse(error=error_detail_obj))
+                         # --- Kết thúc sửa đổi ---
 
                 if is_key_error:
                     logger.warning(f"Vision Key error detected (Status: {error_code}) with key {display_key_id}. Attempting failover...")
@@ -227,18 +276,25 @@ class ModelRouter:
                     failover_start_key_id_for_attempt = current_key_id # Có thể là None nếu key ban đầu lỗi và không có ID
                     if not failover_start_key_id_for_attempt:
                          logger.error(f"Vision: Cannot perform failover because the ID of the failed key is unknown (was likely missing initially).")
-                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}")
+                         # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                         fail_msg = f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}"
+                         error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, fail_msg)
+                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                         # --- Kết thúc sửa đổi ---
 
 
                     new_key_info = await attempt_automatic_failover(
-                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase
+                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase # Vẫn truyền error_message string
                     )
 
                     if new_key_info:
                         next_key_id = new_key_info['id']
                         if next_key_id in tried_key_ids:
                             logger.error(f"Vision: Failover returned an already tried key ({next_key_id}). Exhausted.")
-                            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                            # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                            error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, "All available provider keys failed or are temporarily disabled (cycle detected).")
+                            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                            # --- Kết thúc sửa đổi ---
                         else:
                             current_key_id = next_key_id
                             current_api_key = new_key_info['api_key']
@@ -254,17 +310,30 @@ class ModelRouter:
                                 action="FAILOVER_EXHAUSTED", details=f"All keys failed. Last error on this key: {error_code}",
                                 supabase=supabase
                             )
-                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"All provider keys failed or are temporarily disabled. Last error: {error_code} - {error_message}")
+                        # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                        fail_msg = f"All provider keys failed or are temporarily disabled. Last error: {error_code} - {error_message}"
+                        error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, fail_msg)
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                        # --- Kết thúc sửa đổi ---
                 else:
-                    logger.error(f"Vision: Non-key error encountered. Raising.")
-                    raise e # Ném lỗi không phải key ra ngoài
+                    # Lỗi không phải key error, ném ra với định dạng OpenAI
+                    logger.error(f"Vision: Non-key error encountered. Raising with OpenAI format.")
+                    # Sử dụng error_code và error_message đã xác định từ exception gốc (e)
+                    error_detail_obj = ModelRouter._map_error_to_openai(error_code, error_message)
+                    raise HTTPException(status_code=error_code, detail=ErrorResponse(error=error_detail_obj))
 
             except Exception as e:
                  logger.exception(f"Vision: Unexpected error during API call with key {display_key_id}: {e}")
-                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
+                 # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                 error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_500_INTERNAL_SERVER_ERROR, f"An unexpected error occurred: {e}")
+                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=ErrorResponse(error=error_detail_obj))
+                 # --- Kết thúc sửa đổi ---
 
         logger.error("Vision: Exited failover loop unexpectedly.")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during vision failover process.")
+        # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+        error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error during vision failover process.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=ErrorResponse(error=error_detail_obj))
+        # --- Kết thúc sửa đổi ---
 
 
     @staticmethod
@@ -365,7 +434,10 @@ class ModelRouter:
                     next_key_id = new_key_info['id']
                     if next_key_id in tried_key_ids:
                         logger.error(f"Chat Completion: Failover returned an already tried key ({next_key_id}). Exhausted.")
-                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                        # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                        error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, "All available provider keys failed or are temporarily disabled (cycle detected).")
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                        # --- Kết thúc sửa đổi ---
                     else:
                         current_key_id = next_key_id
                         current_api_key = new_key_info['api_key']
@@ -373,7 +445,10 @@ class ModelRouter:
                         logger.info(f"Chat Completion: Failover selected initial/next key: {current_key_id}")
                 else:
                     logger.error(f"Chat Completion: Failover could not find any usable key for provider {provider_key_name}.")
-                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"No usable API key available for provider {provider_key_name}.")
+                    # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                    error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, f"No usable API key available for provider {provider_key_name}.")
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                    # --- Kết thúc sửa đổi ---
 
             # --- Thực hiện gọi API ---
             display_key_id = current_key_id if current_key_id else "unknown"
@@ -384,10 +459,10 @@ class ModelRouter:
                     # >>> Thêm kiểm tra prompt rỗng
                     if not prompt:
                         logger.error("Chat Completion: No user message found after conversion for Gemini. Cannot proceed.")
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="Invalid request: Could not extract a user message to form the prompt for the Gemini model."
-                        )
+                        # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                        error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_400_BAD_REQUEST, "Invalid request: Could not extract a user message to form the prompt for the Gemini model.")
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ErrorResponse(error=error_detail_obj))
+                        # --- Kết thúc sửa đổi ---
                     # <<< Kết thúc kiểm tra
                     service = GeminiService(api_key=current_api_key, model=base_model_name)
                     response_text, _ = await service.generate_text_response(message=prompt, history=history, model=base_model_name)
@@ -461,7 +536,10 @@ class ModelRouter:
 
                 else:
                     logger.error(f"Internal routing error: Unhandled provider key name '{provider_key_name}'")
-                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
+                    # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                    error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error during model routing.")
+                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=ErrorResponse(error=error_detail_obj))
+                    # --- Kết thúc sửa đổi ---
 
             # --- Xử lý lỗi và Failover ---
             except (HTTPException, ValueError) as e:
@@ -484,7 +562,10 @@ class ModelRouter:
                         logger.warning(f"Chat Completion: Caught ValueError indicating invalid API key: {error_message}")
                     else:
                          logger.exception(f"Chat Completion: Caught non-key ValueError: {e}")
-                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid value encountered: {e}")
+                         # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                         error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_400_BAD_REQUEST, f"Invalid value encountered: {e}")
+                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ErrorResponse(error=error_detail_obj))
+                         # --- Kết thúc sửa đổi ---
 
                 if is_key_error:
                     logger.warning(f"Chat Completion Key error detected (Status: {error_code}) with key {display_key_id}. Attempting failover...")
@@ -492,17 +573,24 @@ class ModelRouter:
                     failover_start_key_id_for_attempt = current_key_id
                     if not failover_start_key_id_for_attempt:
                          logger.error(f"Chat Completion: Cannot perform failover because the ID of the failed key is unknown.")
-                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}")
+                         # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                         fail_msg = f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}"
+                         error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, fail_msg)
+                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                         # --- Kết thúc sửa đổi ---
 
                     new_key_info = await attempt_automatic_failover(
-                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase
+                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase # Vẫn truyền error_message string
                     )
 
                     if new_key_info:
                         next_key_id = new_key_info['id']
                         if next_key_id in tried_key_ids:
                             logger.error(f"Chat Completion: Failover returned an already tried key ({next_key_id}). Exhausted.")
-                            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                            # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                            error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, "All available provider keys failed or are temporarily disabled (cycle detected).")
+                            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                            # --- Kết thúc sửa đổi ---
                         else:
                             current_key_id = next_key_id
                             current_api_key = new_key_info['api_key']
@@ -518,17 +606,30 @@ class ModelRouter:
                                 action="FAILOVER_EXHAUSTED", details=f"All keys failed. Last error on this key: {error_code}",
                                 supabase=supabase
                             )
-                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"All provider keys failed or are temporarily disabled. Last error: {error_code} - {error_message}")
+                        # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                        fail_msg = f"All provider keys failed or are temporarily disabled. Last error: {error_code} - {error_message}"
+                        error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_503_SERVICE_UNAVAILABLE, fail_msg)
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error=error_detail_obj))
+                        # --- Kết thúc sửa đổi ---
                 else:
-                    logger.error(f"Chat Completion: Non-key error encountered. Raising.")
-                    raise e
+                    # Lỗi không phải key error, ném ra với định dạng OpenAI
+                    logger.error(f"Chat Completion: Non-key error encountered. Raising with OpenAI format.")
+                    # Sử dụng error_code và error_message đã xác định từ exception gốc (e)
+                    error_detail_obj = ModelRouter._map_error_to_openai(error_code, error_message)
+                    raise HTTPException(status_code=error_code, detail=ErrorResponse(error=error_detail_obj))
 
             except Exception as e:
                  logger.exception(f"Chat Completion: Unexpected error during API call with key {display_key_id}: {e}")
-                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
+                 # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+                 error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_500_INTERNAL_SERVER_ERROR, f"An unexpected error occurred: {e}")
+                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=ErrorResponse(error=error_detail_obj))
+                 # --- Kết thúc sửa đổi ---
 
         logger.error("Chat Completion: Exited failover loop unexpectedly.")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during chat completion failover process.")
+        # --- Sửa đổi: Raise lỗi đúng định dạng OpenAI ---
+        error_detail_obj = ModelRouter._map_error_to_openai(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error during chat completion failover process.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=ErrorResponse(error=error_detail_obj))
+        # --- Kết thúc sửa đổi ---
 
 
     @staticmethod

@@ -1,4 +1,8 @@
-# 🌐 AI Model Gateway
+<div align="center">
+  <img src="frontend/user-dashboard/src/assets/Hyper.svg" alt="Hyper AI Gateway Logo" width="200" height="200"/>
+</div>
+
+# 🌐 Hyper AI Gateway
 
 A unified API gateway for accessing multiple AI models including Gemini, Grok, GigaChat, and Perplexity Sonar.
 
@@ -9,7 +13,7 @@ A unified API gateway for accessing multiple AI models including Gemini, Grok, G
 
 ## 📋 Overview
 
-AI Model Gateway is a service that provides a unified API interface to interact with different AI models through a standardized REST API. The service currently supports:
+Hyper AI Gateway is a service that provides a unified API interface to interact with different AI models through a standardized REST API. The service currently supports:
 
 - **Gemini AI models** (Google)
 - **Grok AI models** (xAI)
@@ -167,10 +171,20 @@ This ensures higher availability and resilience by automatically handling tempor
 ## 📜 Activity Log
 
 The gateway logs important events related to provider key management:
-- Manual actions via UI: Add, Delete, Select/Unselect, Import keys.
-- System actions: Automatic key selection/unselection during failover, key exhaustion events.
+- **Manual actions via UI**: Add, Delete, Select/Unselect, Import keys.
+- **System actions**: Automatic key selection/unselection during failover, key exhaustion events.
+- **Detailed logging**: Each log entry includes timestamp, action type, provider name, key identifier, and description.
 
-Logs can be viewed in the "Activity Log" section of the user dashboard.
+Logs can be viewed in the "Activity Log" section of the user dashboard or retrieved programmatically through the `/api/v1/activity-logs` endpoint.
+
+Available log actions include:
+- `ADD`: When a new provider key is added
+- `DELETE`: When a provider key is deleted 
+- `SELECT`: When a key is selected (manually or automatically via failover)
+- `UNSELECT`: When a key is unselected (manually or due to errors)
+- `IMPORT`: When keys are batch imported
+
+This comprehensive logging system allows administrators to track key usage patterns, troubleshoot authentication issues, and monitor the automatic failover system's effectiveness.
 
 ## 🏗️ Project Structure
 

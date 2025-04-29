@@ -13,8 +13,14 @@ class VisionResponse(BaseModel): # Renamed from OCRResponse
     model_used: str
 
 
+class OpenAIErrorDetail(BaseModel):
+    message: str
+    type: str
+    param: Optional[str] = None
+    code: Optional[str] = None
+
 class ErrorResponse(BaseModel):
-    detail: str
+    error: OpenAIErrorDetail
 # --- Chat Schemas ---
 class ChatMessage(BaseModel):
     """Represents a single message in the chat history. Standardized to use 'content'."""

@@ -1,6 +1,6 @@
 # 📘 API Documentation
 
-This document provides detailed information about the AI Model Gateway API endpoints.
+This document provides detailed information about the Hyper AI Gateway API endpoints.
 
 ## 📑 Table of Contents
 
@@ -298,6 +298,10 @@ Retrieve recent activity logs related to provider key management for the authent
 
 **Query Parameters**:
 - `limit` (integer, optional, default: 50): Maximum number of log entries to return.
+- `provider` (string, optional): Filter logs by provider name (e.g., `?provider=google`).
+- `action` (string, optional): Filter logs by action type (e.g., `?action=SELECT`).
+- `from_date` (string, optional): Filter logs created on or after this date (ISO format, e.g., `?from_date=2025-04-01T00:00:00Z`).
+- `to_date` (string, optional): Filter logs created on or before this date (ISO format, e.g., `?to_date=2025-04-30T23:59:59Z`).
 
 **Response Example**:
 ```json
@@ -333,7 +337,35 @@ Retrieve recent activity logs related to provider key management for the authent
 ]
 ```
 
+### Log Action Types
+
+The activity log system tracks the following action types:
+
+- `ADD`: When a new provider key is created
+- `DELETE`: When a provider key is deleted
+- `SELECT`: When a key is selected as the default for a provider (manually via UI or automatically via failover)
+- `UNSELECT`: When a key is unselected (manually or due to errors during API calls)
+- `IMPORT`: When keys are batch imported via the UI
+
+### Filtering Examples
+
+**Filter by provider and action**:
+```
+GET /api/v1/activity-logs?provider=google&action=SELECT
+```
+
+**Filter by date range**:
+```
+GET /api/v1/activity-logs?from_date=2025-04-01T00:00:00Z&to_date=2025-04-30T23:59:59Z
+```
+
+**Combined filters**:
+```
+GET /api/v1/activity-logs?provider=xai&action=ADD&limit=10
+```
+
 ---
+
 ##  OpenAI-Compatible Endpoints
 
 ### 🤖 Chat Completions

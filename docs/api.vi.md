@@ -1,6 +1,6 @@
 # 📘 Tài liệu API
 
-Tài liệu này cung cấp thông tin chi tiết về các endpoint API của AI Model Gateway.
+Tài liệu này cung cấp thông tin chi tiết về các endpoint API của Hyper AI Gateway.
 
 ## 📑 Mục lục
 
@@ -139,7 +139,7 @@ Quản lý các khóa API cho các nhà cung cấp AI khác nhau (Google, xAI, G
 
 **Xác thực**: Yêu cầu (`Authorization: Bearer sk-...`) cho tất cả các endpoint trong phần này.
 
----
+--- 
 
 ### Tạo Khóa Nhà cung cấp
 
@@ -298,6 +298,10 @@ Truy xuất các bản ghi nhật ký hoạt động gần đây liên quan đ�
 
 **Tham số Query**:
 - `limit` (số nguyên, tùy chọn, mặc định: 50): Số lượng bản ghi nhật ký tối đa cần trả về.
+- `provider` (chuỗi, tùy chọn): Lọc nhật ký theo tên nhà cung cấp (ví dụ: `?provider=google`).
+- `action` (chuỗi, tùy chọn): Lọc nhật ký theo loại hành động (ví dụ: `?action=SELECT`).
+- `from_date` (chuỗi, tùy chọn): Lọc nhật ký được tạo vào hoặc sau ngày này (định dạng ISO, ví dụ: `?from_date=2025-04-01T00:00:00Z`).
+- `to_date` (chuỗi, tùy chọn): Lọc nhật ký được tạo vào hoặc trước ngày này (định dạng ISO, ví dụ: `?to_date=2025-04-30T23:59:59Z`).
 
 **Ví dụ phản hồi**:
 ```json
@@ -333,7 +337,35 @@ Truy xuất các bản ghi nhật ký hoạt động gần đây liên quan đ�
 ]
 ```
 
+### Các loại hành động nhật ký
+
+Hệ thống nhật ký hoạt động theo dõi các loại hành động sau:
+
+- `ADD`: Khi một khóa nhà cung cấp mới được tạo
+- `DELETE`: Khi một khóa nhà cung cấp bị xóa
+- `SELECT`: Khi một khóa được chọn làm mặc định cho một nhà cung cấp (thủ công qua UI hoặc tự động thông qua failover)
+- `UNSELECT`: Khi một khóa bị bỏ chọn (thủ công hoặc do lỗi trong các cuộc gọi API)
+- `IMPORT`: Khi các khóa được nhập hàng loạt qua UI
+
+### Ví dụ về lọc
+
+**Lọc theo nhà cung cấp và hành động**:
+```
+GET /api/v1/activity-logs?provider=google&action=SELECT
+```
+
+**Lọc theo khoảng thời gian**:
+```
+GET /api/v1/activity-logs?from_date=2025-04-01T00:00:00Z&to_date=2025-04-30T23:59:59Z
+```
+
+**Kết hợp các bộ lọc**:
+```
+GET /api/v1/activity-logs?provider=xai&action=ADD&limit=10
+```
+
 ---
+
 ##  Các Endpoint tương thích OpenAI
 
 ### 🤖 Chat Completions

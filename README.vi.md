@@ -1,4 +1,8 @@
-# 🌐 AI Model Gateway
+<div align="center">
+  <img src="frontend/user-dashboard/src/assets/Hyper.svg" alt="Hyper AI Gateway Logo" width="200" height="200"/>
+</div>
+
+# 🌐 Hyper AI Gateway
 
 Cổng API thống nhất để truy cập nhiều mô hình AI khác nhau bao gồm Gemini, Grok, GigaChat, và Perplexity Sonar.
 
@@ -9,7 +13,7 @@ Cổng API thống nhất để truy cập nhiều mô hình AI khác nhau bao g
 
 ## 📋 Tổng quan
 
-AI Model Gateway là một dịch vụ cung cấp giao diện API thống nhất để tương tác với các mô hình AI khác nhau thông qua một REST API tiêu chuẩn. Dịch vụ hiện hỗ trợ:
+Hyper AI Gateway là một dịch vụ cung cấp giao diện API thống nhất để tương tác với các mô hình AI khác nhau thông qua một REST API tiêu chuẩn. Dịch vụ hiện hỗ trợ:
 
 - **Các mô hình Gemini AI** (Google)
 - **Các mô hình Grok AI** (xAI)
@@ -180,10 +184,20 @@ Khi thực hiện yêu cầu thông qua các endpoint tương thích OpenAI (`/v
 ## 📜 Nhật ký Hoạt động
 
 Gateway ghi lại các sự kiện quan trọng liên quan đến quản lý khóa nhà cung cấp:
-- Hành động thủ công qua UI: Thêm, Xóa, Chọn/Bỏ chọn, Nhập khóa.
-- Hành động hệ thống: Tự động chọn/bỏ chọn khóa trong quá trình failover, sự kiện cạn kiệt khóa.
+- **Hành động thủ công qua UI**: Thêm, Xóa, Chọn/Bỏ chọn, Nhập khóa.
+- **Hành động hệ thống**: Tự động chọn/bỏ chọn khóa trong quá trình failover, sự kiện cạn kiệt khóa.
+- **Ghi log chi tiết**: Mỗi bản ghi nhật ký bao gồm thời gian, loại hành động, tên nhà cung cấp, định danh khóa và mô tả.
 
-Nhật ký có thể được xem trong phần "Nhật ký Hoạt động" của bảng điều khiển người dùng.
+Nhật ký có thể được xem trong phần "Nhật ký Hoạt động" của bảng điều khiển người dùng hoặc truy xuất theo chương trình thông qua endpoint `/api/v1/activity-logs`.
+
+Các hành động log có sẵn bao gồm:
+- `ADD`: Khi một khóa nhà cung cấp mới được thêm
+- `DELETE`: Khi một khóa nhà cung cấp bị xóa
+- `SELECT`: Khi một khóa được chọn (thủ công hoặc tự động thông qua failover)
+- `UNSELECT`: Khi một khóa bị bỏ chọn (thủ công hoặc do lỗi)
+- `IMPORT`: Khi các khóa được nhập hàng loạt
+
+Hệ thống ghi log toàn diện này cho phép quản trị viên theo dõi mẫu sử dụng khóa, khắc phục sự cố xác thực và giám sát hiệu quả của hệ thống failover tự động.
 
 ## 🏗️ Cấu trúc Dự án
 
