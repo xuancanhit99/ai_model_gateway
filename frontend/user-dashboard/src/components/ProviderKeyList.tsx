@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react'; // Loại bỏ useCallback không dùng
+import type { RealtimeChannel } from '@supabase/supabase-js'; // Import type cho channel
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
@@ -198,7 +199,8 @@ const ProviderKeyList: React.FC = () => {
       }
 
       // Log thành công, fetch lại logs để cập nhật UI
-      fetchProviderKeyLogs();
+      // Không cần fetch logs thủ công nữa, realtime sẽ cập nhật
+      // fetchProviderKeyLogs();
 
     } catch (err: any) {
       console.error('Error adding activity log via API:', err);
@@ -207,10 +209,100 @@ const ProviderKeyList: React.FC = () => {
     }
   };
 
+  // Effect để fetch dữ liệu ban đầu
   useEffect(() => {
     fetchProviderKeys();
-    fetchProviderKeyLogs();
+    fetchProviderKeyLogs(); // Fetch logs ban đầu khi component mount
   }, []);
+
+  // Effect để thiết lập và dọn dẹp Realtime subscription cho logs
+  useEffect(() => {
+    if (!supabase) return;
+
+    let realtimeChannel: RealtimeChannel | null = null;
+    let userId: string | null = null;
+
+    const setupSubscription = async () => {
+      try {
+        // Thêm kiểm tra supabase rõ ràng trước khi truy cập .auth
+        if (!supabase) {
+            console.error("Realtime setup error: Supabase client is null.");
+            return;
+        }
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user?.id) {
+          console.warn("Realtime logs: User not authenticated.");
+          return; // Không thể subscribe nếu chưa đăng nhập
+        }
+        userId = session.user.id;
+
+        // Thêm kiểm tra supabase rõ ràng trước khi truy cập .channel
+        if (!supabase) {
+            console.error("Realtime setup error: Supabase client became null before creating channel.");
+            return;
+        }
+        // Tạo channel duy nhất cho user và bảng này
+        realtimeChannel = supabase.channel(`provider_key_logs_user_${userId}`);
+
+        realtimeChannel
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'provider_key_logs',
+              filter: `user_id=eq.${userId}` // Chỉ lắng nghe log của user hiện tại
+            },
+            (payload) => {
+              console.log('Realtime: New log received:', payload.new);
+              // Thêm log mới vào đầu danh sách
+              setLogs((currentLogs) => {
+                const newLog = payload.new as ProviderKeyLog;
+                // Tránh thêm trùng lặp nếu có thể (dù INSERT thường không trùng)
+                if (currentLogs.some(log => log.id === newLog.id)) {
+                  return currentLogs;
+                }
+                // Giữ lại tối đa ví dụ 100 logs để tránh state quá lớn
+                const updatedLogs = [newLog, ...currentLogs];
+                return updatedLogs.slice(0, 100);
+              });
+            }
+          )
+          .subscribe((status, err) => {
+            if (status === 'SUBSCRIBED') {
+              console.log('Realtime: Subscribed to provider_key_logs updates!');
+              // Có thể set loadingLogs = false ở đây nếu chỉ dựa vào realtime sau subscribe thành công
+              // setLoadingLogs(false);
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+              console.error('Realtime: Subscription error/closed:', status, err);
+              // Có thể thử subscribe lại hoặc hiển thị thông báo lỗi
+              // setLoadingLogs(false); // Dừng loading nếu có lỗi
+            } else {
+               console.log('Realtime: Subscription status:', status);
+            }
+          });
+
+      } catch (error) {
+        console.error("Error setting up realtime subscription:", error);
+        // setLoadingLogs(false); // Dừng loading nếu có lỗi setup
+      }
+    };
+
+    setupSubscription();
+
+    // Cleanup function khi component unmount
+    return () => {
+      // Thêm kiểm tra supabase !== null trước khi gọi removeChannel
+      if (realtimeChannel && supabase) {
+        supabase.removeChannel(realtimeChannel)
+          .then(() => console.log("Realtime: Unsubscribed from provider_key_logs."))
+          .catch(err => console.error("Realtime: Error unsubscribing", err));
+      } else if (realtimeChannel) {
+          // Xử lý trường hợp supabase bị null nhưng channel vẫn tồn tại (ít xảy ra)
+          console.warn("Realtime: Supabase client became null before unsubscribing channel.");
+      }
+    };
+  }, [supabase]); // Chỉ chạy lại nếu instance supabase thay đổi (thường là không)
 
   // --- Key Handlers ---
   const handleSelectKey = async (keyId: string, providerName: string, currentIsSelected: boolean) => {
@@ -526,7 +618,8 @@ const ProviderKeyList: React.FC = () => {
 
   const handleAddKeySuccess = () => {
     fetchProviderKeys();
-    fetchProviderKeyLogs();
+    // Không cần fetch logs thủ công nữa
+    // fetchProviderKeyLogs();
   };
 
   // --- Render Logic ---
