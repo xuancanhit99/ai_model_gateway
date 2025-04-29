@@ -16,6 +16,9 @@ import logging
 from app.core.config import get_settings
 from app.core.failover_utils import attempt_automatic_failover # Import hàm failover
 from app.core.log_utils import log_activity_db # Import hàm log activity (đã đổi tên)
+from app.core.auth import get_encryption_key # Import only existing helper
+from cryptography.fernet import Fernet # Import Fernet for decryption
+import base64 # Import base64 for Fernet key encoding
 
 settings = get_settings()
 
@@ -116,7 +119,7 @@ class ModelRouter:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing vision request with Gemini: {e}")
 
         elif provider == "x-ai":
-            api_key = provider_api_keys.get("grok")
+            api_key = provider_api_keys.get("xai") # Changed "grok" to "xai"
             try:
                 service = GrokService(api_key=api_key)
                 extracted_text, model_used_by_service = await service.extract_text_from_image(
@@ -182,8 +185,8 @@ class ModelRouter:
         provider_api_keys = provider_api_keys or {}
         original_model_name = model
         base_model_name = ModelRouter._strip_provider_prefix(model)
-        provider_map = {"google": "google", "x-ai": "grok", "sber": "gigachat", "perplexity": "perplexity"}
-        provider_key_name = provider_map.get(ModelRouter._determine_provider(model)) # Tên key trong dict (google, grok, gigachat, perplexity)
+        provider_map = {"google": "google", "x-ai": "xai", "sber": "gigachat", "perplexity": "perplexity"} # Changed "grok" to "xai"
+        provider_key_name = provider_map.get(ModelRouter._determine_provider(model)) # Tên key trong dict (google, xai, gigachat, perplexity)
 
         if not provider_key_name:
              raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider for model '{model}'")
@@ -257,7 +260,7 @@ class ModelRouter:
                     }
                     return response_payload
 
-                elif provider_key_name == "grok":
+                elif provider_key_name == "xai": # Changed "grok" to "xai"
                     service = GrokService(api_key=current_api_key)
                     response_payload = await service.create_chat_completion(
                         model=base_model_name, messages=messages, temperature=temperature, max_tokens=max_tokens, stream=False
@@ -342,12 +345,12 @@ class ModelRouter:
         # Nếu vòng lặp kết thúc mà không return (trường hợp không nên xảy ra nếu logic đúng)
         logging.error("Reached end of failover loop unexpectedly.")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during failover process.")
-    
+
     @staticmethod
     def _convert_messages(messages: List[Dict[str, Any]]) -> Tuple[str, List[ChatMessage]]:
         """
         Chuyển đổi từ định dạng tin nhắn OpenAI sang định dạng Gemini.
-        
+
         Returns:
             Tuple gồm (prompt hiện tại, lịch sử trò chuyện)
         """
@@ -452,7 +455,7 @@ class ModelRouter:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with Gemini: {e}")
 
         elif provider == "x-ai":
-            api_key = provider_api_keys.get("grok")
+            api_key = provider_api_keys.get("xai") # Changed "grok" to "xai"
             try:
                 service = GrokService(api_key=api_key)
                 openai_messages = ModelRouter._convert_simple_to_openai(message, history)
@@ -553,7 +556,7 @@ class ModelRouter:
         base_model_name = ModelRouter._strip_provider_prefix(model)
 
         try:
-            provider_map = {"google": "google", "x-ai": "grok", "sber": "gigachat", "perplexity": "perplexity"}
+            provider_map = {"google": "google", "x-ai": "xai", "sber": "gigachat", "perplexity": "perplexity"} # Changed "grok" to "xai"
             provider_key_name = provider_map.get(ModelRouter._determine_provider(model))
             if not provider_key_name:
                  raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider for model '{model}'")
@@ -577,10 +580,21 @@ class ModelRouter:
                 .limit(1) \
                 .maybe_single() \
                 .execute()
-            if key_res.data:
-                initial_key_id = str(key_res.data['id'])
+            # Kiểm tra xem key_res có tồn tại không TRƯỚC KHI truy cập .data
+            if key_res:
+                if key_res.data:
+                    initial_key_id = str(key_res.data['id'])
+                else:
+                    # Trường hợp key_res tồn tại nhưng data rỗng (ít khả năng với maybe_single)
+                    logging.warning(f"No initial selected key found (empty data) for stream: user {user_id}, provider {provider_key_name}.")
             else:
-                logging.warning(f"No initial selected key found for stream: user {user_id}, provider {provider_key_name}.")
+                # Trường hợp key_res là None (do lỗi execute, ví dụ 406)
+                logging.error(f"Supabase query for initial key failed for stream: user {user_id}, provider {provider_key_name}. Response was None.")
+                # Gửi lỗi SSE cho client
+                error_payload = {"error": {"message": f"Failed to query initial key for provider {provider_key_name}. Check Supabase connection/permissions.", "type": "internal_server_error", "code": 500}}
+                yield f"data: {json.dumps(error_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+                return # Thoát khỏi hàm vì không thể tiếp tục
         except Exception as e:
             logging.exception(f"Error fetching initial key ID for stream: user {user_id}, provider {provider_key_name}: {e}")
             error_payload = {"error": {"message": "Failed to retrieve initial key information.", "type": "internal_server_error", "code": 500}}
@@ -593,64 +607,115 @@ class ModelRouter:
         current_key_id = initial_key_id
 
         if not current_api_key:
-             logging.error(f"No initial API key provided or selected for stream provider {provider_key_name}")
-             if initial_key_id:
-                 new_key_info = await attempt_automatic_failover(
-                     user_id, provider_key_name, initial_key_id, 404, "No initial key selected", supabase
-                 )
-                 if new_key_info:
-                     current_key_id = new_key_info['id']
-                     current_api_key = new_key_info['api_key']
-                     logging.info(f"Failover selected initial key for stream: {current_key_id}")
-                 else:
+            logging.warning(f"No API key found in initial request dict for provider {provider_key_name}. Checking DB for selected key ID: {initial_key_id}")
+            if initial_key_id:
+                # Try to fetch the selected key directly from DB since it wasn't provided
+                try:
+                    key_db_res = supabase.table("user_provider_keys") \
+                        .select("api_key_encrypted") \
+                        .eq("id", initial_key_id) \
+                        .eq("user_id", user_id) \
+                        .maybe_single() \
+                        .execute()
+
+                    if key_db_res and key_db_res.data:
+                        encrypted_key = key_db_res.data.get("api_key_encrypted")
+                        if encrypted_key:
+                            try:
+                                # Decrypt the key fetched from DB using Fernet
+                                encryption_key = get_encryption_key()
+                                f = Fernet(base64.urlsafe_b64encode(encryption_key))
+                                current_api_key = f.decrypt(encrypted_key.encode()).decode()
+                                logging.info(f"Successfully fetched and decrypted selected key {initial_key_id} from DB.")
+                                # Now current_api_key is set, proceed to the API call attempt
+                            except Exception as decrypt_e:
+                                logging.exception(f"Failed to decrypt the selected key {initial_key_id} from DB: {decrypt_e}")
+                                error_payload = {"error": {"message": f"Failed to decrypt stored API key for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
+                                yield f"data: {json.dumps(error_payload)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return
+                        else:
+                            logging.error(f"Selected key {initial_key_id} found in DB but has no encrypted key data.")
+                            error_payload = {"error": {"message": f"Stored API key data is missing for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
+                            yield f"data: {json.dumps(error_payload)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+                    else:
+                        logging.error(f"Could not fetch the selected key {initial_key_id} details from DB despite having its ID.")
+                        error_payload = {"error": {"message": f"Failed to retrieve stored API key details for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
+                        yield f"data: {json.dumps(error_payload)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                except Exception as fetch_e:
+                    logging.exception(f"Error fetching selected key {initial_key_id} details from DB: {fetch_e}")
+                    error_payload = {"error": {"message": f"Database error retrieving API key for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
+                    yield f"data: {json.dumps(error_payload)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+            else:
+                 # No initial_key_id found AND no key provided in dict -> No key configured
+                 logging.error(f"No initial API key provided and no key selected in DB for provider {provider_key_name}.")
+                 error_payload = {"error": {"message": f"No API key configured or selected for provider {provider_key_name}.", "type": "invalid_request_error", "code": 400}}
+                 yield f"data: {json.dumps(error_payload)}\n\n"
+                 yield "data: [DONE]\n\n"
+                 return
+        # If current_api_key was provided initially OR successfully fetched/decrypted above, continue to the loop
+
+        stream_successful = False # Cờ đánh dấu stream thành công
+        attempt = 0
+        while True: # Loop indefinitely until success or exhaustion
+            attempt += 1
+            logging.info(f"--- Starting attempt {attempt} ---")
+            service_stream: Optional[AsyncGenerator[str, None]] = None
+            stream_successful = False # Reset success flag for each attempt
+
+            try:
+                # Ensure we have a key to try for this attempt
+                if not current_api_key or not current_key_id:
+                     logging.error(f"Attempt {attempt}: No valid key available. Provider: {provider_key_name}")
                      error_payload = {"error": {"message": f"No API key available for provider {provider_key_name}.", "type": "service_unavailable", "code": 503}}
                      yield f"data: {json.dumps(error_payload)}\n\n"
                      yield "data: [DONE]\n\n"
                      return
-             else:
-                  error_payload = {"error": {"message": f"No API key configured for provider {provider_key_name}.", "type": "invalid_request_error", "code": 400}}
-                  yield f"data: {json.dumps(error_payload)}\n\n"
-                  yield "data: [DONE]\n\n"
-                  return
 
-        max_retries = 1
-        stream_successful = False # Cờ đánh dấu stream thành công
-        for attempt in range(max_retries + 1):
-            logging.info(f"--- Starting attempt {attempt + 1} of {max_retries + 1} ---") # DEBUG LOG
-            try:
-                logging.info(f"Stream Attempt {attempt + 1}: Calling provider {provider_key_name} with key_id {current_key_id}")
-                # --- Gọi Service Stream tương ứng ---
-                service_stream: Optional[AsyncGenerator[str, None]] = None
-                logging.info(f"Attempt {attempt + 1}: Setting up service stream...") # DEBUG LOG
+                logging.info(f"Stream Attempt {attempt}: Calling provider {provider_key_name} with key_id {current_key_id}")
+
+                # --- Setup Service Stream ---
+                logging.info(f"Attempt {attempt}: Setting up service stream...")
                 if provider_key_name == "google":
                     prompt, history = ModelRouter._convert_messages(messages)
                     service = GeminiService(api_key=current_api_key, model=base_model_name)
                     first_chunk = True
-                    # Cần một wrapper để định dạng SSE và bắt lỗi trong stream
                     async def google_sse_wrapper():
                         nonlocal first_chunk
-                        async for chunk_text in service.stream_text_response(message=prompt, history=history, model=base_model_name):
-                            if chunk_text is None: continue
-                            chunk_payload = {
+                        try:
+                            async for chunk_text in service.stream_text_response(message=prompt, history=history, model=base_model_name):
+                                if chunk_text is None: continue
+                                chunk_payload = {
+                                    "id": request_id, "object": "chat.completion.chunk", "created": created_time,
+                                    "model": original_model_name,
+                                    "choices": [{"index": 0, "delta": {}, "finish_reason": None}]
+                                }
+                                if first_chunk:
+                                    chunk_payload["choices"][0]["delta"]["role"] = "assistant"
+                                    first_chunk = False
+                                chunk_payload["choices"][0]["delta"]["content"] = chunk_text
+                                yield f"data: {json.dumps(chunk_payload, ensure_ascii=False)}\n\n"
+                            final_chunk_payload = {
                                 "id": request_id, "object": "chat.completion.chunk", "created": created_time,
                                 "model": original_model_name,
-                                "choices": [{"index": 0, "delta": {}, "finish_reason": None}]
+                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
                             }
-                            if first_chunk:
-                                chunk_payload["choices"][0]["delta"]["role"] = "assistant"
-                                first_chunk = False
-                            chunk_payload["choices"][0]["delta"]["content"] = chunk_text
-                            yield f"data: {json.dumps(chunk_payload, ensure_ascii=False)}\n\n"
-                        # Gửi chunk cuối cùng sau khi stream kết thúc thành công
-                        final_chunk_payload = {
-                            "id": request_id, "object": "chat.completion.chunk", "created": created_time,
-                            "model": original_model_name,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
-                        }
-                        yield f"data: {json.dumps(final_chunk_payload, ensure_ascii=False)}\n\n"
+                            yield f"data: {json.dumps(final_chunk_payload, ensure_ascii=False)}\n\n"
+                        except HTTPException as gemini_e:
+                             logging.error(f"HTTPException within Gemini stream wrapper: {gemini_e.status_code} - {gemini_e.detail}")
+                             raise gemini_e
+                        except Exception as gemini_e:
+                             logging.exception("Unexpected error within Gemini stream wrapper")
+                             raise HTTPException(status_code=500, detail=f"Unexpected Gemini stream error: {gemini_e}")
                     service_stream = google_sse_wrapper()
 
-                elif provider_key_name == "grok":
+                elif provider_key_name == "xai":
                     service = GrokService(api_key=current_api_key)
                     service_stream = service.stream_chat_completion(model=base_model_name, messages=messages, temperature=temperature, max_tokens=max_tokens)
 
@@ -668,105 +733,85 @@ class ModelRouter:
                      yield f"data: {json.dumps(error_payload)}\n\n"
                      yield "data: [DONE]\n\n"
                      return
- 
-                logging.info(f"Attempt {attempt + 1}: Service stream setup done.") # DEBUG LOG
-                # Yield từ stream của service
-                if service_stream:
-                    logging.info(f"Attempt {attempt + 1}: Entering stream iteration...") # DEBUG LOG
-                    async for chunk in service_stream:
-                        yield chunk
-                    # Nếu stream kết thúc mà không có lỗi, đặt cờ thành công
-                    logging.info(f"Attempt {attempt + 1}: Stream iteration finished successfully.") # DEBUG LOG
-                    stream_successful = True # Đặt cờ thành công
-                    # KHÔNG break ở đây nữa
-                else:
-                    logging.error(f"Attempt {attempt + 1}: Failed to initialize service stream.") # DEBUG LOG
-                    # Trường hợp không tạo được stream (lỗi logic)
-                    raise HTTPException(status_code=500, detail="Failed to initialize service stream")
 
+                logging.info(f"Attempt {attempt}: Service stream setup done.")
 
+                # --- Iterate through the stream ---
+                if not service_stream:
+                     # Should not happen if setup was successful, but check anyway
+                     logging.error(f"Attempt {attempt}: Failed to initialize service stream (service_stream is None).")
+                     raise HTTPException(status_code=500, detail="Failed to initialize provider service stream.")
+
+                logging.info(f"Attempt {attempt}: Entering stream iteration...")
+                async for chunk in service_stream:
+                    yield chunk
+
+                # If the loop completes without raising an exception, it was successful
+                logging.info(f"Attempt {attempt}: Stream iteration finished successfully.")
+                stream_successful = True
+                break # Exit the while loop on success
+
+            # --- Exception Handling for the entire attempt (setup + iteration) ---
             except HTTPException as e:
-                logging.error(f"Attempt {attempt + 1}: Caught HTTPException: {e.status_code} - {e.detail}") # DEBUG LOG
+                logging.error(f"Attempt {attempt}: Caught HTTPException: {e.status_code} - {e.detail}")
                 error_code = e.status_code
                 error_message = e.detail
+                # Updated check for key-related errors
                 is_key_error = error_code in [401, 403, 429] or \
-                               (error_code == 400 and "API key" in error_message.lower())
+                               (error_code == 400 and ("API key" in str(error_message).lower() or "permission denied" in str(error_message).lower() or "Incorrect API key" in str(error_message)))
 
-                if is_key_error and current_key_id and attempt < max_retries:
-                    logging.warning(f"Stream Key error detected (Status: {error_code}). Attempting failover...")
+                if is_key_error and current_key_id:
+                    logging.warning(f"Stream Key error detected (Status: {error_code}) on key {current_key_id}. Attempting failover...")
+                    # --- Failover Logic ---
                     new_key_info = await attempt_automatic_failover(
                         user_id, provider_key_name, current_key_id, error_code, error_message, supabase
                     )
                     if new_key_info:
                         current_key_id = new_key_info['id']
                         current_api_key = new_key_info['api_key']
-                        logging.info(f"Stream Failover successful. Retrying with new key_id: {current_key_id}")
-                        logging.info(f"Attempt {attempt + 1}: Triggering failover and continuing to next attempt.") # DEBUG LOG
-                        continue # Vòng lặp sẽ thử lại với key mới
+                        logging.info(f"Stream Failover successful. Continuing loop with new key_id: {current_key_id}")
+                        continue # Go to the next iteration of the while loop
                     else:
-                        logging.error(f"Stream Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted.")
-                        logging.error(f"Attempt {attempt + 1}: Failover failed. Yielding error and returning.") # DEBUG LOG
-                        error_payload = {"error": {"message": "All provider keys failed or are temporarily disabled.", "type": "service_unavailable", "code": 503}}
+                        # Failover failed - no more keys
+                        logging.error(f"Stream Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted after key {current_key_id} failed.")
+                        await log_activity_db(
+                            user_id=user_id, provider_name=provider_key_name, key_id=current_key_id,
+                            action="FAILOVER_EXHAUSTED",
+                            description=f"All keys failed for provider {provider_key_name}. Last error: {error_code}",
+                            supabase=supabase
+                        )
+                        error_payload = {"error": {"message": f"All provider keys failed or are temporarily disabled for {provider_key_name}. Last error: {error_code}", "type": "service_unavailable", "code": 503}}
                         yield f"data: {json.dumps(error_payload)}\n\n"
                         yield "data: [DONE]\n\n"
-                        return # Kết thúc stream generator
+                        return # Exit generator
                 else:
-                    # Lỗi không phải do key, hoặc đã hết lượt retry, hoặc không có initial_key_id
-                    if attempt == max_retries and is_key_error:
-                         logging.error(f"Stream Retry attempt failed with key error (Status: {error_code}) for key_id {current_key_id}.")
-                         await log_activity_db(
-                             user_id=user_id, provider_name=provider_key_name, key_id=current_key_id,
-                             action="RETRY_FAILED", details=f"Stream retry failed with error {error_code} after failover.",
-                             supabase=supabase
-                         )
-                         error_payload = {"error": {"message": "Provider key failover attempt failed.", "type": "service_unavailable", "code": 503}}
-                         yield f"data: {json.dumps(error_payload)}\n\n"
-                         yield "data: [DONE]\n\n"
-                         return
-                    else:
-                         # Lỗi không phải do key, hoặc đã hết lượt retry, hoặc không có initial_key_id
-                         logging.error(f"Attempt {attempt + 1}: Non-key HTTPException or final attempt failed. Yielding error and returning.") # DEBUG LOG
-                         logging.exception(f"Unhandled HTTPException details during stream attempt {attempt + 1}: {e}") # Log details
-                         error_payload = {"error": {"message": f"Error during streaming: {e.detail}", "type": "api_error", "code": e.status_code}}
-                         yield f"data: {json.dumps(error_payload)}\n\n"
-                         yield "data: [DONE]\n\n"
-                         return
+                    # Error is not a key error, or failover is not possible/applicable
+                    logging.error(f"Attempt {attempt}: Non-key HTTPException occurred ({error_code}) or failover not applicable. Yielding error and stopping.")
+                    logging.exception(f"Unhandled HTTPException details during stream attempt {attempt}: {e}") # Log stack trace
+                    error_payload = {"error": {"message": f"Error during streaming: {error_message}", "type": "api_error", "code": error_code}}
+                    yield f"data: {json.dumps(error_payload)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return # Exit generator
 
             except Exception as e:
-                 logging.exception(f"Attempt {attempt + 1}: Caught unexpected Exception.") # DEBUG LOG (using .exception)
-                 # Bắt các lỗi không mong muốn khác trong quá trình stream hoặc từ service
-                 # logging.exception(f"Unexpected error during stream attempt {attempt + 1} for provider {provider_key_name}: {e}") # Redundant with above
+                 # Catch any other unexpected errors during the attempt
+                 logging.exception(f"Attempt {attempt}: Caught unexpected Exception.")
                  error_type = "internal_server_error"
                  error_code = 500
-                 error_message = f"Unexpected error processing stream with {provider_key_name}: {e}"
-
-                 # Nếu đây là lần thử lại và vẫn lỗi, ghi log và cập nhật thông báo lỗi
-                 if attempt == max_retries:
-                      if current_key_id: # Chỉ ghi log nếu có key ID để tham chiếu
-                          await log_activity_db(
-                              user_id=user_id, provider_name=provider_key_name, key_id=current_key_id,
-                              action="RETRY_FAILED", details=f"Stream retry failed with unexpected error: {str(e)}",
-                              supabase=supabase
-                          )
-                      error_message = f"Provider key failover attempt failed with unexpected error: {e}"
-                      error_type = "service_unavailable" # Có thể coi là 503 vì retry thất bại
-                      error_code = 503
-
-                 # Yield thông báo lỗi SSE chuẩn
+                 error_message = f"Unexpected error processing stream with {provider_key_name} on attempt {attempt}: {e}"
                  error_payload = {"error": {"message": error_message, "type": error_type, "code": error_code}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
                  yield "data: [DONE]\n\n"
-                 return # Kết thúc stream generator khi có lỗi không xử lý được
- 
-            # Kiểm tra cờ sau khối try...except để break nếu thành công
-            if stream_successful:
-                logging.info(f"--- Attempt {attempt + 1} was successful, breaking loop. ---") # DEBUG LOG
-                break
- 
-        # Nếu vòng lặp kết thúc mà không break (tức là stream_successful vẫn là False sau tất cả các lần thử)
-        if not stream_successful: # Thêm kiểm tra này để log lỗi cuối cùng chính xác hơn
-            logging.info("--- Loop finished without successful stream completion ---") # DEBUG LOG
-            logging.error("Stream failover loop finished unexpectedly.") # Original error log
-            error_payload = {"error": {"message": "Internal server error during stream failover process.", "type": "internal_server_error", "code": 500}}
-            yield f"data: {json.dumps(error_payload)}\n\n"
+                 return # Exit generator
+
+        # --- End of while loop ---
+        # This part is only reached if the loop was exited via 'break' (i.e., success)
+        if stream_successful:
+            logging.info(f"--- Stream completed successfully after {attempt} attempt(s). ---")
             yield "data: [DONE]\n\n"
+        else:
+             # Should not happen if logic is correct, but as a safeguard
+             logging.error("Stream loop exited without success flag set and without returning an error.")
+             error_payload = {"error": {"message": "Internal server error: Stream ended unexpectedly.", "type": "internal_server_error", "code": 500}}
+             yield f"data: {json.dumps(error_payload)}\n\n"
+             yield "data: [DONE]\n\n"

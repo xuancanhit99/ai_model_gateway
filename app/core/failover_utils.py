@@ -1,4 +1,5 @@
 # app/core/failover_utils.py
+import re
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
@@ -183,10 +184,10 @@ async def attempt_automatic_failover(
     # 4. Cập nhật is_selected trong DB
     try:
         # Bỏ chọn key cũ
-        # Xóa await ở đây
+        # Gỡ bỏ await vì update().execute() là đồng bộ
         supabase.table("user_provider_keys").update({"is_selected": False}).eq("id", failed_key_id).execute()
         # Chọn key mới
-        # Xóa await ở đây
+        # Gỡ bỏ await vì update().execute() là đồng bộ
         supabase.table("user_provider_keys").update({"is_selected": True}).eq("id", next_key_id).execute()
         logger.info(f"Successfully switched selected key from {failed_key_id} to {next_key_id}")
     except Exception as e:
@@ -212,11 +213,13 @@ async def attempt_automatic_failover(
         logger.warning(f"Could not fetch name for next key {next_key_id}: {e}")
 
     # 5. Ghi Activity Log cho việc chuyển đổi (await là đúng vì log_activity_db là async)
+    # Nối toàn bộ error_message vào description
+    error_detail = f": {error_message}" if error_message else ""
+
     # Gọi log_activity_db và truyền supabase
-    # Đã đúng: gọi log_activity_db và truyền supabase
     await log_activity_db(
         user_id=user_id, provider_name=provider_name, key_id=failed_key_id, action="UNSELECT",
-        supabase=supabase, description=f"Key '{failed_key_name}' unselected due to error {error_code}"
+        supabase=supabase, description=f"Key '{failed_key_name}' unselected due to error {error_code}{error_detail}" # Thêm toàn bộ error_message
     )
     await log_activity_db(
         user_id=user_id, provider_name=provider_name, key_id=next_key_id, action="SELECT",

@@ -55,28 +55,33 @@ class GrokService:
                     api_err_msg = error_data.get("error", {}).get("message") or error_data.get("detail")
                     if api_err_msg:
                         error_detail = f"Grok API Error: {api_err_msg}"
+                        # --- Failover Trigger Errors ---
                         if "authentication" in api_err_msg.lower() or status_code == 401:
-                            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-                            error_detail = "Grok service failed: Invalid API Key configured or provided."
+                            status_code = status.HTTP_401_UNAUTHORIZED # Raise 401 for failover
+                            error_detail = f"Grok API Key Error: {api_err_msg}"
                         elif "rate limit" in api_err_msg.lower() or status_code == 429:
-                            status_code = status.HTTP_429_TOO_MANY_REQUESTS
+                            status_code = status.HTTP_429_TOO_MANY_REQUESTS # Raise 429 for failover
                             error_detail = "Grok service rate limited by API. Please try again later."
                         elif "invalid input" in api_err_msg.lower() or status_code == 400:
                             status_code = status.HTTP_400_BAD_REQUEST
                             error_detail = f"Grok API rejected input: {api_err_msg}"
                         else:
-                            status_code = status.HTTP_502_BAD_GATEWAY
-                    else:
-                        if status_code == 401: status_code = status.HTTP_500_INTERNAL_SERVER_ERROR; error_detail = "Grok service failed: Invalid API Key."
-                        elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS; error_detail = "Grok service rate limited."
-                        elif status_code == 400: status_code = status.HTTP_400_BAD_REQUEST; error_detail = "Grok API rejected input."
-                        else: status_code = status.HTTP_502_BAD_GATEWAY; error_detail = "Bad Gateway connecting to Grok API."
+                            status_code = status.HTTP_502_BAD_GATEWAY # Other API errors
+                    else: # Error parsing failed, rely on status code
+                        # --- Failover Trigger Errors ---
+                        if status_code == 401: status_code = status.HTTP_401_UNAUTHORIZED; error_detail = "Grok service failed: Invalid API Key (Authentication Failed)." # Raise 401
+                        elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS; error_detail = "Grok service rate limited." # Raise 429
+                        # --- Other Errors ---
+                        elif status_code == 400: status_code = status.HTTP_400_BAD_REQUEST; error_detail = "Grok API rejected input (Bad Request)."
+                        else: status_code = status.HTTP_502_BAD_GATEWAY; error_detail = f"Bad Gateway connecting to Grok API (Status: {status_code})."
 
-                except Exception:
-                    if status_code == 401: status_code = status.HTTP_500_INTERNAL_SERVER_ERROR; error_detail = "Grok service failed: Invalid API Key."
-                    elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS; error_detail = "Grok service rate limited."
-                    elif status_code == 400: status_code = status.HTTP_400_BAD_REQUEST; error_detail = "Grok API rejected input."
-                    else: status_code = status.HTTP_502_BAD_GATEWAY; error_detail = "Bad Gateway connecting to Grok API."
+                except Exception: # Fallback if JSON parsing fails completely
+                    # --- Failover Trigger Errors ---
+                    if status_code == 401: status_code = status.HTTP_401_UNAUTHORIZED; error_detail = "Grok service failed: Invalid API Key (Authentication Failed)." # Raise 401
+                    elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS; error_detail = "Grok service rate limited." # Raise 429
+                    # --- Other Errors ---
+                    elif status_code == 400: status_code = status.HTTP_400_BAD_REQUEST; error_detail = "Grok API rejected input (Bad Request)."
+                    else: status_code = status.HTTP_502_BAD_GATEWAY; error_detail = f"Bad Gateway connecting to Grok API (Status: {status_code})."
 
                 logging.error(f"Grok API Error: {error_detail} (Status: {status_code})")
                 raise HTTPException(status_code=status_code, detail=error_detail) from e
@@ -285,44 +290,59 @@ class GrokService:
             try:
                 logging.debug(f"Grok Request Payload (stream): {payload}")
                 async with client.stream("POST", self.api_endpoint, json=payload, headers=headers, timeout=timeout) as response:
+                    # Check for HTTP errors *before* iterating
                     if response.status_code >= 400:
                         error_body = await response.aread()
-                        error_detail = f"Grok API stream request failed (Status: {response.status_code})"
+                        status_code = response.status_code
+                        error_detail = f"Grok API stream request failed (Status: {status_code})"
                         try:
                             error_data = json.loads(error_body.decode())
                             api_err_msg = error_data.get("error", {}).get("message") or error_data.get("detail")
                             if api_err_msg:
                                 error_detail = f"Grok API Error: {api_err_msg}"
+                                # Map specific errors for failover
+                                if "authentication" in api_err_msg.lower() or status_code == 401:
+                                    status_code = status.HTTP_401_UNAUTHORIZED
+                                elif "rate limit" in api_err_msg.lower() or status_code == 429:
+                                    status_code = status.HTTP_429_TOO_MANY_REQUESTS
                         except Exception:
                             error_detail += f" - Body: {error_body.decode()[:200]}"
+                            # Map status codes if parsing failed
+                            if status_code == 401: status_code = status.HTTP_401_UNAUTHORIZED
+                            elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS
 
-                        logging.error(f"Grok API Stream Error: {error_detail} (Status: {response.status_code})")
-                        error_payload = {"error": {"message": error_detail, "type": "api_error", "code": response.status_code}}
-                        yield f"data: {json.dumps(error_payload)}\n\n"
-                        return
+                        logging.error(f"Grok API Stream Error: {error_detail} (Status: {status_code})")
+                        # RAISE HTTPException instead of yielding SSE error
+                        raise HTTPException(status_code=status_code, detail=error_detail)
 
+                    # If status is OK, proceed with streaming
                     async for line in response.aiter_lines():
                         if line:
                             yield line + "\n\n"
 
-            except httpx.HTTPStatusError as e:
+            except httpx.HTTPStatusError as e: # Should be less likely now due to check inside stream block
                 status_code = e.response.status_code
                 error_detail = f"Grok API stream request failed (Status: {status_code})"
+                try: # Try to get more details
+                    error_data = e.response.json()
+                    api_err_msg = error_data.get("error", {}).get("message") or error_data.get("detail")
+                    if api_err_msg: error_detail = f"Grok API Error: {api_err_msg}"
+                except Exception: pass
+                # Map specific errors for failover
+                if status_code == 401: status_code = status.HTTP_401_UNAUTHORIZED
+                elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS
                 logging.error(f"Grok API Stream HTTPStatusError: {error_detail}")
-                error_payload = {"error": {"message": error_detail, "type": "api_error", "code": status_code}}
-                yield f"data: {json.dumps(error_payload)}\n\n"
-            except httpx.TimeoutException:
+                # RAISE HTTPException
+                raise HTTPException(status_code=status_code, detail=error_detail) from e
+            except httpx.TimeoutException as e:
                 logging.error("Stream request to Grok API timed out.")
-                error_payload = {"error": {"message": "Request to Grok API timed out.", "type": "timeout_error", "code": 504}}
-                yield f"data: {json.dumps(error_payload)}\n\n"
+                # RAISE HTTPException
+                raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Request to Grok API timed out.") from e
             except httpx.RequestError as e:
                 logging.error(f"Could not connect to Grok API for streaming: {e}")
-                error_payload = {"error": {"message": "Could not connect to the backend Grok service.", "type": "connection_error", "code": 503}}
-                yield f"data: {json.dumps(error_payload)}\n\n"
-            except Exception as e:
-                logging.exception("An unexpected error occurred during Grok stream request.")
-                error_payload = {"error": {"message": "An unexpected internal error occurred during streaming.", "type": "internal_server_error", "code": 500}}
-                yield f"data: {json.dumps(error_payload)}\n\n"
+                # RAISE HTTPException
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Could not connect to the backend Grok service.") from e
+            # Removed the generic except Exception block here to allow specific exceptions to propagate
 
     async def stream_chat_completion(
         self,
@@ -419,8 +439,10 @@ class GrokService:
                     logging.warning(f"Received unexpected line from Grok stream: {line.strip()}")
 
         except HTTPException as e:
-            error_payload = {"error": {"message": f"Grok Stream Error: {e.detail}", "type": "invalid_request_error", "code": e.status_code}}
-            yield f"data: {json.dumps(error_payload)}\n\n"
+            # Don't yield error here, just re-raise for model_router to handle failover or yield final error
+            # error_payload = {"error": {"message": f"Grok Stream Error: {e.detail}", "type": "invalid_request_error", "code": e.status_code}}
+            # yield f"data: {json.dumps(error_payload)}\n\n"
+            raise e # Re-raise the exception so model_router can catch it
         except Exception as e:
             logging.exception(f"Unexpected error setting up Grok stream for model {model}")
             error_payload = {"error": {"message": f"Unexpected error setting up Grok stream: {e}", "type": "internal_server_error", "code": 500}}

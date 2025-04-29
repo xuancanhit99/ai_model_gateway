@@ -251,102 +251,114 @@ class GigaChatService:
         first_chunk = True
 
         try:
-            # Create a new client within this method for streaming
-            async with httpx.AsyncClient(verify=False) as client:
-                async with client.stream(
-                    "POST", 
-                    request_info["chat_url"], 
-                    json=request_info["payload"], 
-                    headers=request_info["headers"], 
-                    timeout=90.0
-                ) as response:
-                    if response.status_code >= 400:
-                        error_body = await response.aread()
-                        error_detail = f"GigaChat API stream request failed (Status: {response.status_code})"
-                        try:
-                            error_data = json.loads(error_body.decode())
-                            api_err_msg = error_data.get("message")
-                            if api_err_msg:
-                                error_detail = f"GigaChat API Error: {api_err_msg}"
-                        except Exception:
-                            error_detail += f" - Body: {error_body.decode()[:200]}"
-                        
-                        logging.error(f"GigaChat Stream Error: {error_detail}")
-                        error_payload = {"error": {"message": error_detail, "type": "api_error", "code": response.status_code}}
-                        yield f"data: {json.dumps(error_payload)}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
+           # Create a new client within this method for streaming
+           async with httpx.AsyncClient(verify=False) as client:
+               async with client.stream(
+                   "POST",
+                   request_info["chat_url"],
+                   json=request_info["payload"],
+                   headers=request_info["headers"],
+                   timeout=90.0
+               ) as response:
+                   # Check for HTTP errors *before* iterating
+                   if response.status_code >= 400:
+                       error_body = await response.aread()
+                       status_code = response.status_code
+                       error_detail = f"GigaChat API stream request failed (Status: {status_code})"
+                       try:
+                           error_data = json.loads(error_body.decode())
+                           api_err_msg = error_data.get("message")
+                           if api_err_msg:
+                               error_detail = f"GigaChat API Error: {api_err_msg}"
+                       except Exception:
+                           error_detail += f" - Body: {error_body.decode()[:200]}"
 
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                            
-                        if line.strip() == "data: [DONE]":
-                            yield line
-                            break
-                            
-                        if line.startswith("data:"):
-                            try:
-                                chunk_data_str = line.strip()[len("data: "):]
-                                chunk_data = json.loads(chunk_data_str)
+                       # Map specific errors for failover
+                       if status_code == 401: status_code = status.HTTP_401_UNAUTHORIZED
+                       elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS
 
-                                if "error" in chunk_data:
-                                    logging.error(f"GigaChat stream returned an error: {chunk_data['error']}")
-                                    error_payload = {"error": chunk_data["error"]}
-                                    yield f"data: {json.dumps(error_payload)}\n\n"
-                                    continue
+                       logging.error(f"GigaChat Stream Error: {error_detail} (Status: {status_code})")
+                       # RAISE HTTPException instead of yielding SSE error
+                       raise HTTPException(status_code=status_code, detail=error_detail)
+                   else:
+                       # If status is OK, proceed with streaming
+                       async for line in response.aiter_lines():
+                           if not line:
+                               continue
 
-                                openai_chunk = {
-                                    "id": request_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created_time,
-                                    "model": model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {},
-                                        "finish_reason": None
-                                    }]
-                                }
+                           if line.strip() == "data: [DONE]":
+                               yield line
+                               break
 
-                                giga_delta = chunk_data.get("choices", [{}])[0].get("delta", {})
-                                giga_content = giga_delta.get("content")
-                                giga_role = giga_delta.get("role")
-                                finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
+                           if line.startswith("data:"):
+                               try:
+                                   chunk_data_str = line.strip()[len("data: "):]
+                                   chunk_data = json.loads(chunk_data_str)
 
-                                if first_chunk and not giga_role:
-                                    openai_chunk["choices"][0]["delta"]["role"] = "assistant"
-                                    first_chunk = False
-                                elif giga_role:
-                                    openai_chunk["choices"][0]["delta"]["role"] = giga_role
-                                    first_chunk = False
+                                   if "error" in chunk_data:
+                                       logging.error(f"GigaChat stream returned an error: {chunk_data['error']}")
+                                       error_payload = {"error": chunk_data["error"]}
+                                       yield f"data: {json.dumps(error_payload)}\n\n"
+                                       continue
 
-                                if giga_content is not None:
-                                    openai_chunk["choices"][0]["delta"]["content"] = giga_content
-                                    first_chunk = False
+                                   openai_chunk = {
+                                       "id": request_id,
+                                       "object": "chat.completion.chunk",
+                                       "created": created_time,
+                                       "model": model,
+                                       "choices": [{
+                                           "index": 0,
+                                           "delta": {},
+                                           "finish_reason": None
+                                       }]
+                                   }
 
-                                if finish_reason:
-                                    openai_chunk["choices"][0]["finish_reason"] = finish_reason
+                                   giga_delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                                   giga_content = giga_delta.get("content")
+                                   giga_role = giga_delta.get("role")
+                                   finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
 
-                                if openai_chunk["choices"][0]["delta"] or openai_chunk["choices"][0]["finish_reason"]:
-                                    yield f"data: {json.dumps(openai_chunk, ensure_ascii=False)}\n\n"
+                                   if first_chunk and not giga_role:
+                                       openai_chunk["choices"][0]["delta"]["role"] = "assistant"
+                                       first_chunk = False
+                                   elif giga_role:
+                                       openai_chunk["choices"][0]["delta"]["role"] = giga_role
+                                       first_chunk = False
 
-                            except json.JSONDecodeError:
-                                logging.warning(f"Received non-JSON data line from GigaChat stream: {line.strip()}")
-                            except Exception as e:
-                                logging.error(f"Error processing GigaChat stream chunk: {e} - Line: {line.strip()}")
-                        elif line.strip():
-                            logging.warning(f"Received unexpected line from GigaChat stream: {line.strip()}")
+                                   if giga_content is not None:
+                                       openai_chunk["choices"][0]["delta"]["content"] = giga_content
+                                       first_chunk = False
 
-        except httpx.HTTPStatusError as e:
-            error_payload = {"error": {"message": f"GigaChat Stream Error: {e}", "type": "api_error", "code": e.response.status_code if hasattr(e, 'response') else 500}}
-            yield f"data: {json.dumps(error_payload)}\n\n"
-        except HTTPException as e:
-            error_payload = {"error": {"message": f"GigaChat Stream Setup Error: {e.detail}", "type": "api_error", "code": e.status_code}}
-            yield f"data: {json.dumps(error_payload)}\n\n"
+                                   if finish_reason:
+                                       openai_chunk["choices"][0]["finish_reason"] = finish_reason
+
+                                   if openai_chunk["choices"][0]["delta"] or openai_chunk["choices"][0]["finish_reason"]:
+                                       yield f"data: {json.dumps(openai_chunk, ensure_ascii=False)}\n\n"
+
+                               except json.JSONDecodeError:
+                                   logging.warning(f"Received non-JSON data line from GigaChat stream: {line.strip()}")
+                               except Exception as e:
+                                   logging.error(f"Error processing GigaChat stream chunk: {e} - Line: {line.strip()}")
+                           elif line.strip():
+                               logging.warning(f"Received unexpected line from GigaChat stream: {line.strip()}")
+
+        except httpx.HTTPStatusError as e: # Should be less likely now
+            status_code = e.response.status_code if hasattr(e, 'response') else 500
+            error_detail = f"GigaChat Stream Error: {e}"
+            # Map specific errors for failover
+            if status_code == 401: status_code = status.HTTP_401_UNAUTHORIZED
+            elif status_code == 429: status_code = status.HTTP_429_TOO_MANY_REQUESTS
+            logging.error(f"GigaChat Stream HTTPStatusError: {error_detail} (Status: {status_code})")
+            # RAISE HTTPException
+            raise HTTPException(status_code=status_code, detail=error_detail) from e
+        except HTTPException as e: # Catch exceptions from _make_request (e.g., token error)
+            logging.error(f"GigaChat Stream Setup Error: {e.detail} (Status: {e.status_code})")
+            # RAISE HTTPException (re-raise)
+            raise e
         except Exception as e:
-            logging.exception(f"Unexpected error during GigaChat streaming for model {model}")
-            error_payload = {"error": {"message": f"Unexpected error during GigaChat streaming: {e}", "type": "internal_server_error", "code": 500}}
-            yield f"data: {json.dumps(error_payload)}\n\n"
+            logging.exception(f"Unexpected error during GigaChat streaming setup for model {model}")
+            # RAISE HTTPException
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error during GigaChat streaming setup: {e}") from e
 
         yield "data: [DONE]\n\n"
 
