@@ -1,5 +1,5 @@
 # app/services/model_router.py
-from typing import Dict, Any, Tuple, List, Optional, AsyncGenerator
+from typing import Dict, Any, Tuple, List, Optional, AsyncGenerator, Set
 import json
 import re
 from fastapi import HTTPException, status, UploadFile
@@ -15,12 +15,13 @@ import uuid
 import logging
 from app.core.config import get_settings
 from app.core.failover_utils import attempt_automatic_failover # Import hàm failover
-from app.core.log_utils import log_activity_db # Import hàm log activity (đã đổi tên)
+from app.core.log_utils import log_activity_db # Import hàm log activity
 from app.core.auth import get_encryption_key # Import only existing helper
 from cryptography.fernet import Fernet # Import Fernet for decryption
 import base64 # Import base64 for Fernet key encoding
 
 settings = get_settings()
+logger = logging.getLogger(__name__) # Thêm logger
 
 class ModelRouter:
     """Lớp chịu trách nhiệm định tuyến các yêu cầu đến mô hình AI thích hợp."""
@@ -45,7 +46,7 @@ class ModelRouter:
         elif model.startswith("perplexity/") or "sonar" in model.lower() or "r1-1776" in model.lower():
             return "perplexity"
         else:
-            logging.error(f"Could not determine provider for model: {model}")
+            logger.error(f"Could not determine provider for model: {model}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Could not determine the provider for the requested model '{model}'. Supported models contain 'gemini', 'grok', 'gigachat', or 'sonar'."
@@ -56,89 +57,215 @@ class ModelRouter:
         model: str,
         image_file: UploadFile,
         prompt: Optional[str],
-        provider_api_keys: Dict[str, str] = None
+        provider_api_keys: Dict[str, str] = None,
+        supabase: Optional[Client] = None,
+        auth_info: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, str]:
         """
-        Routes vision extraction requests to the appropriate model (Gemini or Grok).
-
-        Args:
-            model: The requested model name (e.g., 'google/gemini-pro-vision', 'x-ai/grok-vision').
-            image_file: The uploaded image file.
-            prompt: Optional custom prompt for extraction.
-            provider_api_keys: Dictionary containing API keys ('google', 'grok').
-
-        Returns:
-            Tuple of (extracted_text, model_used)
+        Định tuyến yêu cầu vision extraction, hỗ trợ tự động failover API key liên tục.
         """
+        if supabase is None or auth_info is None:
+             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                 detail="Internal configuration error: Supabase client or Auth info missing for failover.")
+
+        user_id = auth_info.get("user_id")
+        if not user_id:
+             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                 detail="Internal configuration error: User ID missing for failover.")
+
         provider_api_keys = provider_api_keys or {}
-        logging.info(f"Routing vision extraction request for model: {model}")
+        logger.info(f"Routing vision extraction request for model: {model} with continuous failover")
 
         original_model_name = model
         base_model_name = ModelRouter._strip_provider_prefix(model)
-        provider = ModelRouter._determine_provider(model)
+        provider_name = ModelRouter._determine_provider(model) # google, x-ai
+        provider_map = {"google": "google", "x-ai": "xai"} # Map logical name to key name
+        provider_key_name = provider_map.get(provider_name)
 
-        if provider not in ["google", "x-ai"]:
-            logging.error(f"Provider '{provider}' determined for model '{model}' does not support vision tasks.")
+        if not provider_key_name:
+            logger.error(f"Provider '{provider_name}' determined for model '{model}' does not support vision tasks or mapping failed.")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Model '{model}' belongs to provider '{provider}' which does not support vision extraction."
+                detail=f"Model '{model}' belongs to provider '{provider_name}' which does not support vision extraction or is not configured for failover."
             )
 
-        if provider == "google":
-            api_key = provider_api_keys.get("google")
+        # --- Lấy ID của key ban đầu ---
+        initial_key_id: Optional[str] = None
+        try:
+            key_res = supabase.table("user_provider_keys").select("id") \
+                .eq("user_id", user_id) \
+                .eq("provider_name", provider_key_name) \
+                .eq("is_selected", True) \
+                .limit(1) \
+                .maybe_single() \
+                .execute()
+            if key_res and key_res.data:
+                initial_key_id = str(key_res.data['id'])
+            else:
+                logger.warning(f"Vision: No initial selected key found for user {user_id}, provider {provider_key_name}.")
+        except Exception as e:
+            logger.exception(f"Vision: Error fetching initial key ID for user {user_id}, provider {provider_key_name}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve initial key information for vision.")
+
+        # --- Logic Gọi API và Failover ---
+        current_api_key = provider_api_keys.get(provider_key_name)
+        current_key_id = initial_key_id
+        tried_key_ids: Set[str] = set()
+        if current_key_id:
+            tried_key_ids.add(current_key_id)
+
+        if not current_api_key and initial_key_id:
+             try:
+                 key_db_res = supabase.table("user_provider_keys") \
+                     .select("api_key_encrypted") \
+                     .eq("id", initial_key_id) \
+                     .eq("user_id", user_id) \
+                     .maybe_single() \
+                     .execute()
+                 if key_db_res and key_db_res.data:
+                     encrypted_key = key_db_res.data.get("api_key_encrypted")
+                     if encrypted_key:
+                         encryption_key = get_encryption_key()
+                         f = Fernet(base64.urlsafe_b64encode(encryption_key))
+                         current_api_key = f.decrypt(encrypted_key.encode()).decode()
+                         logger.info(f"Vision: Successfully fetched and decrypted selected key {initial_key_id} from DB.")
+                     else:
+                         logger.error(f"Vision: Selected key {initial_key_id} found but has no encrypted key data.")
+                 else:
+                     logger.error(f"Vision: Could not fetch selected key {initial_key_id} details from DB.")
+             except Exception as fetch_e:
+                 logger.exception(f"Vision: Error fetching/decrypting selected key {initial_key_id}: {fetch_e}")
+
+        # Vòng lặp failover liên tục
+        while True:
+            if not current_api_key or not current_key_id:
+                logger.warning(f"Vision: No API key available at the start of this attempt. Attempting failover.")
+                failover_start_key_id = current_key_id if current_key_id else f"no-key-yet-{uuid.uuid4()}"
+                error_code = 400
+                error_message = "Missing or failed to load API key"
+
+                new_key_info = await attempt_automatic_failover(
+                    user_id, provider_key_name, failover_start_key_id, error_code, error_message, supabase
+                )
+
+                if new_key_info:
+                    next_key_id = new_key_info['id']
+                    if next_key_id in tried_key_ids:
+                        logger.error(f"Vision: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                    else:
+                        current_key_id = next_key_id
+                        current_api_key = new_key_info['api_key']
+                        tried_key_ids.add(current_key_id)
+                        logger.info(f"Vision: Failover selected initial/next key: {current_key_id}")
+                else:
+                    logger.error(f"Vision: Failover could not find any usable key for provider {provider_key_name}.")
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"No usable API key available for provider {provider_key_name}.")
+
+            # --- Thực hiện gọi API với key hiện tại ---
+            display_key_id = current_key_id if current_key_id else "unknown" # Sửa đổi để xử lý None
+            logger.info(f"Vision Attempt: Calling provider {provider_key_name} with key_id {display_key_id}")
             try:
+                await image_file.seek(0)
                 image_bytes = await image_file.read()
                 await image_file.seek(0)
 
-                mime_type = image_file.content_type
-                if mime_type not in settings.GEMINI_ALLOWED_CONTENT_TYPES:
-                    guessed_type, _ = mimetypes.guess_type(image_file.filename or "image.bin")
-                    if guessed_type in settings.GEMINI_ALLOWED_CONTENT_TYPES:
-                        mime_type = guessed_type
+                if provider_key_name == "google":
+                    mime_type = image_file.content_type
+                    if mime_type not in settings.GEMINI_ALLOWED_CONTENT_TYPES:
+                        guessed_type, _ = mimetypes.guess_type(image_file.filename or "image.bin")
+                        if guessed_type in settings.GEMINI_ALLOWED_CONTENT_TYPES:
+                            mime_type = guessed_type
+                        else:
+                            raise HTTPException(
+                                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                                detail=f"Unsupported image type '{mime_type}' for Gemini. Allowed: {', '.join(settings.GEMINI_ALLOWED_CONTENT_TYPES)}"
+                            )
+                    service = GeminiService(api_key=current_api_key, model=base_model_name)
+                    extracted_text, _ = await service.extract_text(image_data=image_bytes, content_type=mime_type, prompt=prompt)
+                    logger.info(f"Vision: Successfully extracted text using key {display_key_id}")
+                    return extracted_text, original_model_name
+
+                elif provider_key_name == "xai":
+                    service = GrokService(api_key=current_api_key)
+                    await image_file.seek(0)
+                    extracted_text, _ = await service.extract_text_from_image(image_file=image_file, model=base_model_name, prompt=prompt)
+                    logger.info(f"Vision: Successfully extracted text using key {display_key_id}")
+                    return extracted_text, original_model_name
+
+                logger.error(f"Internal vision routing error after check: Unhandled provider '{provider_key_name}'")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during vision model routing.")
+
+            # --- Xử lý lỗi và Failover ---
+            except (HTTPException, ValueError) as e:
+                logger.warning(f"Vision Attempt with key {display_key_id} failed - Type: {type(e).__name__}, Detail: {e}")
+                error_code = 500
+                error_message = str(e)
+                is_key_error = False
+
+                if isinstance(e, HTTPException):
+                    error_code = e.status_code
+                    error_message = e.detail
+                    # Sửa đổi: Coi 400 từ 'xai' là lỗi key
+                    is_key_error = error_code in [401, 403, 429] or \
+                                   (error_code == 400 and ("API key" in str(error_message).lower() or "api key not valid" in str(error_message).lower())) or \
+                                   (error_code == 415 and "API key" in str(error_message).lower()) or \
+                                   (provider_key_name == "xai" and error_code == 400) # Thêm điều kiện cho Grok 400
+                elif isinstance(e, ValueError):
+                    if "API key not valid" in error_message.lower() or "invalid api key" in error_message.lower():
+                        is_key_error = True
+                        error_code = 401
+                        logger.warning(f"Vision: Caught ValueError indicating invalid API key: {error_message}")
                     else:
-                        logging.error(f"Unsupported image type '{mime_type}' for Gemini.")
-                        raise HTTPException(
-                            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                            detail=f"Unsupported image type '{mime_type}' for Gemini. Allowed: {', '.join(settings.GEMINI_ALLOWED_CONTENT_TYPES)}"
-                        )
+                         logger.exception(f"Vision: Caught non-key ValueError: {e}")
+                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid value encountered: {e}")
 
-                service = GeminiService(api_key=api_key, model=base_model_name)
-                extracted_text, model_used_by_service = await service.extract_text(
-                    image_data=image_bytes,  # Changed keyword argument name
-                    content_type=mime_type,
-                    prompt=prompt
-                )
-                return extracted_text, original_model_name
+                if is_key_error:
+                    logger.warning(f"Vision Key error detected (Status: {error_code}) with key {display_key_id}. Attempting failover...")
 
-            except ValueError as e:
-                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini API Key Error: {e}")
-            except HTTPException as e:
-                raise e
+                    # Cần ID của key vừa lỗi để failover_utils tìm key tiếp theo
+                    failover_start_key_id_for_attempt = current_key_id # Có thể là None nếu key ban đầu lỗi và không có ID
+                    if not failover_start_key_id_for_attempt:
+                         logger.error(f"Vision: Cannot perform failover because the ID of the failed key is unknown (was likely missing initially).")
+                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}")
+
+
+                    new_key_info = await attempt_automatic_failover(
+                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase
+                    )
+
+                    if new_key_info:
+                        next_key_id = new_key_info['id']
+                        if next_key_id in tried_key_ids:
+                            logger.error(f"Vision: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                        else:
+                            current_key_id = next_key_id
+                            current_api_key = new_key_info['api_key']
+                            tried_key_ids.add(current_key_id)
+                            logger.info(f"Vision Failover successful. Trying next key_id: {current_key_id}")
+                            continue # Quay lại đầu vòng lặp while để thử key mới
+                    else:
+                        logger.error(f"Vision Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted.")
+                        log_key_id_on_exhaust = current_key_id # Log ID của key cuối cùng gây lỗi
+                        if log_key_id_on_exhaust: # Chỉ log nếu có key ID
+                            await log_activity_db(
+                                user_id=user_id, provider_name=provider_key_name, key_id=log_key_id_on_exhaust,
+                                action="FAILOVER_EXHAUSTED", details=f"All keys failed. Last error on this key: {error_code}",
+                                supabase=supabase
+                            )
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"All provider keys failed or are temporarily disabled. Last error: {error_code} - {error_message}")
+                else:
+                    logger.error(f"Vision: Non-key error encountered. Raising.")
+                    raise e # Ném lỗi không phải key ra ngoài
+
             except Exception as e:
-                logging.exception(f"Error processing Gemini vision request for model {original_model_name}: {e}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing vision request with Gemini: {e}")
+                 logger.exception(f"Vision: Unexpected error during API call with key {display_key_id}: {e}")
+                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
 
-        elif provider == "x-ai":
-            api_key = provider_api_keys.get("xai") # Changed "grok" to "xai"
-            try:
-                service = GrokService(api_key=api_key)
-                extracted_text, model_used_by_service = await service.extract_text_from_image(
-                    image_file=image_file,
-                    model=base_model_name,
-                    prompt=prompt
-                )
-                return extracted_text, original_model_name
+        logger.error("Vision: Exited failover loop unexpectedly.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during vision failover process.")
 
-            except ValueError as e:
-                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Grok API Key Error: {e}")
-            except HTTPException as e:
-                raise e
-            except Exception as e:
-                logging.exception(f"Error processing Grok vision request for model {original_model_name}: {e}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing vision request with Grok: {e}")
-
-        logging.error(f"Internal vision routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during vision model routing.")
 
     @staticmethod
     async def route_chat_completion(
@@ -147,59 +274,37 @@ class ModelRouter:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         provider_api_keys: Dict[str, str] = None,
-        # Thêm các tham số cần thiết cho failover
         supabase: Optional[Client] = None,
         auth_info: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Định tuyến yêu cầu chat completion tới mô hình AI thích hợp,
-        hỗ trợ tự động failover API key.
-
-        Args:
-            model: Tên mô hình (ví dụ: "google/gemini-2.5-pro-exp-03-25")
-            messages: Danh sách các tin nhắn từ request
-            temperature: Nhiệt độ cho quá trình sinh văn bản
-            max_tokens: Số lượng token tối đa cho phản hồi
-            provider_api_keys: Dict chứa API key ban đầu (đã được chọn is_selected=True).
-            supabase: Supabase client instance.
-            auth_info: Dict chứa thông tin xác thực ('user_id', 'key_prefix', 'provider_keys', 'token').
-
-        Returns:
-            Phản hồi theo định dạng OpenAI.
-
-        Raises:
-            HTTPException: 503 nếu tất cả các key của provider đều lỗi.
-                           Các lỗi khác nếu có vấn đề không liên quan đến key.
+        hỗ trợ tự động failover API key liên tục.
         """
         if supabase is None or auth_info is None:
-             # Cần có supabase và auth_info để thực hiện failover
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                  detail="Internal configuration error: Supabase client or Auth info missing for failover.")
 
         user_id = auth_info.get("user_id")
-        auth_token = auth_info.get("token") # Lấy token từ auth_info
-        if not user_id or not auth_token:
+        if not user_id:
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                 detail="Internal configuration error: User ID or Auth token missing for failover.")
+                                 detail="Internal configuration error: User ID missing for failover.")
 
         provider_api_keys = provider_api_keys or {}
         original_model_name = model
         base_model_name = ModelRouter._strip_provider_prefix(model)
-        provider_name = ModelRouter._determine_provider(model) # Get the logical provider name (e.g., "gigachat")
-        provider_map = {"google": "google", "x-ai": "xai", "gigachat": "gigachat", "perplexity": "perplexity"} # Map logical name to key name
-        provider_key_name = provider_map.get(provider_name) # Tên key trong dict (google, xai, gigachat, perplexity)
+        provider_name = ModelRouter._determine_provider(model)
+        provider_map = {"google": "google", "x-ai": "xai", "gigachat": "gigachat", "perplexity": "perplexity"}
+        provider_key_name = provider_map.get(provider_name)
 
         if not provider_key_name:
-             # This should ideally not happen if _determine_provider works correctly
              raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider '{provider_name}' for model '{model}'")
 
-        logging.info(f"Routing chat completion for model: {original_model_name} (Provider Key Name: {provider_key_name}, Base Model: {base_model_name})")
+        logger.info(f"Routing chat completion for model: {original_model_name} (Provider Key Name: {provider_key_name}, Base Model: {base_model_name})")
 
         # --- Lấy ID của key ban đầu ---
         initial_key_id: Optional[str] = None
         try:
-            # Cần lấy ID của key đang is_selected=True cho provider này
-            # Xóa await ở đây
             key_res = supabase.table("user_provider_keys").select("id") \
                 .eq("user_id", user_id) \
                 .eq("provider_name", provider_key_name) \
@@ -207,67 +312,97 @@ class ModelRouter:
                 .limit(1) \
                 .maybe_single() \
                 .execute()
-            if key_res.data:
+            if key_res and key_res.data:
                 initial_key_id = str(key_res.data['id'])
             else:
-                logging.warning(f"No initial selected key found for user {user_id}, provider {provider_key_name}. Using provided key without failover ID.")
-                # Nếu không có key nào được chọn, failover sẽ không hoạt động đúng cách
-                # nhưng vẫn thử gọi API với key được cung cấp (nếu có)
+                logger.warning(f"Chat Completion: No initial selected key found for user {user_id}, provider {provider_key_name}.")
         except Exception as e:
-            logging.exception(f"Error fetching initial key ID for user {user_id}, provider {provider_key_name}: {e}")
-            # Không thể lấy ID key ban đầu, không thể thực hiện failover chính xác
-            # Ném lỗi hoặc tiếp tục mà không có failover? -> Ném lỗi để rõ ràng
+            logger.exception(f"Chat Completion: Error fetching initial key ID for user {user_id}, provider {provider_key_name}: {e}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve initial key information.")
 
         # --- Logic Gọi API và Failover ---
         current_api_key = provider_api_keys.get(provider_key_name)
         current_key_id = initial_key_id
+        tried_key_ids: Set[str] = set()
+        if current_key_id:
+            tried_key_ids.add(current_key_id)
 
-        if not current_api_key:
-             # Nếu không có key nào được chọn ban đầu và truyền vào
-             logging.error(f"No initial API key provided or selected for provider {provider_key_name}")
-             # Thử gọi failover ngay lập tức để tìm key khác nếu có
-             if initial_key_id: # Chỉ gọi failover nếu biết key nào (không) được chọn
-                 new_key_info = await attempt_automatic_failover(
-                     user_id, provider_key_name, initial_key_id, 404, "No initial key selected", supabase
-                 )
-                 if new_key_info:
-                     current_key_id = new_key_info['id']
-                     current_api_key = new_key_info['api_key']
-                     logging.info(f"Failover selected initial key: {current_key_id}")
+        if not current_api_key and initial_key_id:
+             try:
+                 key_db_res = supabase.table("user_provider_keys") \
+                     .select("api_key_encrypted") \
+                     .eq("id", initial_key_id) \
+                     .eq("user_id", user_id) \
+                     .maybe_single() \
+                     .execute()
+                 if key_db_res and key_db_res.data:
+                     encrypted_key = key_db_res.data.get("api_key_encrypted")
+                     if encrypted_key:
+                         encryption_key = get_encryption_key()
+                         f = Fernet(base64.urlsafe_b64encode(encryption_key))
+                         current_api_key = f.decrypt(encrypted_key.encode()).decode()
+                         logger.info(f"Chat Completion: Successfully fetched and decrypted selected key {initial_key_id} from DB.")
+                     else:
+                         logger.error(f"Chat Completion: Selected key {initial_key_id} found but has no encrypted key data.")
                  else:
-                     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"No API key available for provider {provider_key_name}.")
-             else:
-                  raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"No API key configured for provider {provider_key_name}.")
+                     logger.error(f"Chat Completion: Could not fetch selected key {initial_key_id} details from DB.")
+             except Exception as fetch_e:
+                 logger.exception(f"Chat Completion: Error fetching/decrypting selected key {initial_key_id}: {fetch_e}")
 
+        # Vòng lặp failover liên tục
+        while True:
+            if not current_api_key or not current_key_id:
+                logger.warning(f"Chat Completion: No API key available at the start of this attempt. Attempting failover.")
+                failover_start_key_id = current_key_id if current_key_id else f"no-key-yet-chat-{uuid.uuid4()}"
+                error_code = 400
+                error_message = "Missing or failed to load API key"
 
-        max_retries = 1 # Thử lại 1 lần sau failover
-        for attempt in range(max_retries + 1):
+                new_key_info = await attempt_automatic_failover(
+                    user_id, provider_key_name, failover_start_key_id, error_code, error_message, supabase
+                )
+
+                if new_key_info:
+                    next_key_id = new_key_info['id']
+                    if next_key_id in tried_key_ids:
+                        logger.error(f"Chat Completion: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                    else:
+                        current_key_id = next_key_id
+                        current_api_key = new_key_info['api_key']
+                        tried_key_ids.add(current_key_id)
+                        logger.info(f"Chat Completion: Failover selected initial/next key: {current_key_id}")
+                else:
+                    logger.error(f"Chat Completion: Failover could not find any usable key for provider {provider_key_name}.")
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"No usable API key available for provider {provider_key_name}.")
+
+            # --- Thực hiện gọi API ---
+            display_key_id = current_key_id if current_key_id else "unknown"
+            logger.info(f"Chat Completion Attempt: Calling provider {provider_key_name} with key_id {display_key_id}")
             try:
-                logging.info(f"Attempt {attempt + 1}: Calling provider {provider_key_name} with key_id {current_key_id}")
-                # --- Gọi Service tương ứng ---
                 if provider_key_name == "google":
                     prompt, history = ModelRouter._convert_messages(messages)
                     service = GeminiService(api_key=current_api_key, model=base_model_name)
                     response_text, _ = await service.generate_text_response(message=prompt, history=history, model=base_model_name)
                     if response_text is None: response_text = ""
                     elif not isinstance(response_text, str): response_text = str(response_text)
-                    prompt_tokens = sum(len(msg.get("content", "").split()) for msg in messages if isinstance(msg.get("content"), str)) * 4
-                    completion_tokens = len(response_text.split()) * 4
+                    prompt_tokens = sum(len(msg.get("content", "").split()) for msg in messages if isinstance(msg.get("content"), str)) * 4 # Rough estimate
+                    completion_tokens = len(response_text.split()) * 4 # Rough estimate
                     response_payload = {
                         "id": f"chatcmpl-gemini-{uuid.uuid4().hex}", "object": "chat.completion", "created": int(time.time()),
                         "model": original_model_name,
                         "choices": [{"index": 0, "message": {"role": "assistant", "content": response_text}, "finish_reason": "stop"}],
                         "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": prompt_tokens + completion_tokens},
                     }
+                    logger.info(f"Chat Completion: Success with key {display_key_id}")
                     return response_payload
 
-                elif provider_key_name == "xai": # Changed "grok" to "xai"
+                elif provider_key_name == "xai":
                     service = GrokService(api_key=current_api_key)
                     response_payload = await service.create_chat_completion(
                         model=base_model_name, messages=messages, temperature=temperature, max_tokens=max_tokens, stream=False
                     )
                     response_payload["model"] = original_model_name
+                    logger.info(f"Chat Completion: Success with key {display_key_id}")
                     return response_payload
 
                 elif provider_key_name == "gigachat":
@@ -276,6 +411,7 @@ class ModelRouter:
                         model=base_model_name, messages=messages, temperature=temperature, max_tokens=max_tokens, stream=False
                     )
                     response_payload["model"] = original_model_name
+                    logger.info(f"Chat Completion: Success with key {display_key_id}")
                     return response_payload
 
                 elif provider_key_name == "perplexity":
@@ -284,77 +420,85 @@ class ModelRouter:
                         messages=messages, model=base_model_name, temperature=temperature, max_tokens=max_tokens, stream=False
                     )
                     response_payload["model"] = original_model_name
+                    logger.info(f"Chat Completion: Success with key {display_key_id}")
                     return response_payload
 
                 else:
-                    # Trường hợp này không nên xảy ra nếu _determine_provider hoạt động đúng
-                    logging.error(f"Internal routing error: Unhandled provider key name '{provider_key_name}'")
+                    logger.error(f"Internal routing error: Unhandled provider key name '{provider_key_name}'")
                     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
 
-            except HTTPException as e:
-                # Kiểm tra xem có phải lỗi liên quan đến key không
-                error_code = e.status_code
-                error_message = e.detail
-                is_key_error = error_code in [401, 403, 429] or \
-                               (error_code == 400 and "API key" in error_message.lower()) # Ví dụ kiểm tra message cho lỗi 400
+            # --- Xử lý lỗi và Failover ---
+            except (HTTPException, ValueError) as e:
+                logger.warning(f"Chat Completion Attempt with key {display_key_id} failed - Type: {type(e).__name__}, Detail: {e}")
+                error_code = 500
+                error_message = str(e)
+                is_key_error = False
 
-                if is_key_error and current_key_id and attempt < max_retries:
-                    logging.warning(f"Key error detected (Status: {error_code}). Attempting failover...")
+                if isinstance(e, HTTPException):
+                    error_code = e.status_code
+                    error_message = e.detail
+                    # Sửa đổi: Coi 400 từ 'xai' là lỗi key
+                    is_key_error = error_code in [401, 403, 429] or \
+                                   (error_code == 400 and ("API key" in str(error_message).lower() or "api key not valid" in str(error_message).lower())) or \
+                                   (provider_key_name == "xai" and error_code == 400) # Thêm điều kiện cho Grok 400
+                elif isinstance(e, ValueError):
+                    if "API key not valid" in error_message.lower() or "invalid api key" in error_message.lower():
+                        is_key_error = True
+                        error_code = 401
+                        logger.warning(f"Chat Completion: Caught ValueError indicating invalid API key: {error_message}")
+                    else:
+                         logger.exception(f"Chat Completion: Caught non-key ValueError: {e}")
+                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid value encountered: {e}")
+
+                if is_key_error:
+                    logger.warning(f"Chat Completion Key error detected (Status: {error_code}) with key {display_key_id}. Attempting failover...")
+
+                    failover_start_key_id_for_attempt = current_key_id
+                    if not failover_start_key_id_for_attempt:
+                         logger.error(f"Chat Completion: Cannot perform failover because the ID of the failed key is unknown.")
+                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}")
+
                     new_key_info = await attempt_automatic_failover(
-                        user_id, provider_key_name, current_key_id, error_code, error_message, supabase
+                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase
                     )
+
                     if new_key_info:
-                        current_key_id = new_key_info['id']
-                        current_api_key = new_key_info['api_key']
-                        logging.info(f"Failover successful. Retrying with new key_id: {current_key_id}")
-                        continue # Vòng lặp sẽ thử lại với key mới
+                        next_key_id = new_key_info['id']
+                        if next_key_id in tried_key_ids:
+                            logger.error(f"Chat Completion: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                        else:
+                            current_key_id = next_key_id
+                            current_api_key = new_key_info['api_key']
+                            tried_key_ids.add(current_key_id)
+                            logger.info(f"Chat Completion Failover successful. Trying next key_id: {current_key_id}")
+                            continue
                     else:
-                        # Failover không tìm được key mới
-                        logging.error(f"Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted.")
-                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All provider keys failed or are temporarily disabled.")
+                        logger.error(f"Chat Completion Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted.")
+                        log_key_id_on_exhaust = current_key_id
+                        if log_key_id_on_exhaust:
+                            await log_activity_db(
+                                user_id=user_id, provider_name=provider_key_name, key_id=log_key_id_on_exhaust,
+                                action="FAILOVER_EXHAUSTED", details=f"All keys failed. Last error on this key: {error_code}",
+                                supabase=supabase
+                            )
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"All provider keys failed or are temporarily disabled. Last error: {error_code} - {error_message}")
                 else:
-                    # Lỗi không phải do key, hoặc đã hết lượt retry, hoặc không có initial_key_id
-                    if attempt == max_retries and is_key_error:
-                         logging.error(f"Retry attempt failed with key error (Status: {error_code}) for key_id {current_key_id}.")
-                         # Ghi log retry failed
-                         await log_activity_db(
-                             user_id=user_id, provider_name=provider_key_name, key_id=current_key_id,
-                             action="RETRY_FAILED", details=f"Retry failed with error {error_code} after failover.",
-                             supabase=supabase
-                         )
-                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Provider key failover attempt failed.")
-                    else:
-                         # Ném lại lỗi gốc nếu không phải lỗi key hoặc không thể failover/retry
-                         logging.exception(f"Unhandled exception during API call attempt {attempt + 1}: {e}")
-                         raise e
+                    logger.error(f"Chat Completion: Non-key error encountered. Raising.")
+                    raise e
 
             except Exception as e:
-                 # Bắt các lỗi không mong muốn khác từ service
-                 logging.exception(f"Unexpected error during API call attempt {attempt + 1} for provider {provider_key_name}: {e}")
-                 # Nếu đây là lần thử lại và vẫn lỗi, coi như failover thất bại
-                 if attempt == max_retries:
-                      await log_activity_db(
-                          user_id=user_id, provider_name=provider_key_name, key_id=current_key_id,
-                          action="RETRY_FAILED", details=f"Retry failed with unexpected error: {str(e)}",
-                          supabase=supabase
-                      )
-                      raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Provider key failover attempt failed with unexpected error: {e}")
-                 else:
-                      # Nếu là lỗi ở lần đầu, có thể thử failover nếu có vẻ liên quan đến key (khó xác định)
-                      # Hoặc đơn giản là ném lỗi 500
-                      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error processing request with {provider_key_name}: {e}")
+                 logger.exception(f"Chat Completion: Unexpected error during API call with key {display_key_id}: {e}")
+                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
 
-        # Nếu vòng lặp kết thúc mà không return (trường hợp không nên xảy ra nếu logic đúng)
-        logging.error("Reached end of failover loop unexpectedly.")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during failover process.")
+        logger.error("Chat Completion: Exited failover loop unexpectedly.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during chat completion failover process.")
+
 
     @staticmethod
     def _convert_messages(messages: List[Dict[str, Any]]) -> Tuple[str, List[ChatMessage]]:
         """
         Chuyển đổi từ định dạng tin nhắn OpenAI sang định dạng Gemini.
-
-        Returns:
-            Tuple gồm (prompt hiện tại, lịch sử trò chuyện)
         """
         history = []
         system_message = None
@@ -386,6 +530,7 @@ class ModelRouter:
                 break
 
         if last_user_message_index == -1:
+            logger.warning("No user message found to form the prompt for Gemini.")
             return "", []
 
         prompt: str
@@ -408,6 +553,8 @@ class ModelRouter:
             if h_msg.role != last_role:
                 final_history.append(h_msg)
                 last_role = h_msg.role
+            else:
+                logger.warning(f"Skipping message due to consecutive roles in history for Gemini: {h_msg.role}")
 
         return prompt, final_history
 
@@ -426,100 +573,211 @@ class ModelRouter:
         model: str,
         message: str,
         history: List[ChatMessage],
-        provider_api_keys: Dict[str, str] = None
+        provider_api_keys: Dict[str, str] = None,
+        supabase: Optional[Client] = None,
+        auth_info: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, str]:
-        """Routes simple chat requests (message + history) to the appropriate model."""
+        """Định tuyến yêu cầu simple chat, hỗ trợ tự động failover API key liên tục."""
+        if supabase is None or auth_info is None:
+             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                 detail="Internal configuration error: Supabase client or Auth info missing for failover.")
+
+        user_id = auth_info.get("user_id")
+        if not user_id:
+             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                 detail="Internal configuration error: User ID missing for failover.")
+
         provider_api_keys = provider_api_keys or {}
-        logging.info(f"Routing simple chat request for model: {model}")
+        logger.info(f"Routing simple chat request for model: {model} with continuous failover")
 
         original_model_name = model
         base_model_name = ModelRouter._strip_provider_prefix(model)
-        provider = ModelRouter._determine_provider(model)
+        provider_name = ModelRouter._determine_provider(model)
+        provider_map = {"google": "google", "x-ai": "xai", "gigachat": "gigachat", "perplexity": "perplexity"}
+        provider_key_name = provider_map.get(provider_name)
 
-        if provider == "google":
-            api_key = provider_api_keys.get("google")
-            try:
-                service = GeminiService(api_key=api_key, model=base_model_name)
-                response_text, model_used_by_service = await service.generate_text_response(
-                    message=message,
-                    history=history,
-                    model=base_model_name
+        if not provider_key_name:
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider '{provider_name}' for simple chat model '{model}'")
+
+        # --- Lấy ID của key ban đầu ---
+        initial_key_id: Optional[str] = None
+        try:
+            key_res = supabase.table("user_provider_keys").select("id") \
+                .eq("user_id", user_id) \
+                .eq("provider_name", provider_key_name) \
+                .eq("is_selected", True) \
+                .limit(1) \
+                .maybe_single() \
+                .execute()
+            if key_res and key_res.data:
+                initial_key_id = str(key_res.data['id'])
+            else:
+                logger.warning(f"Simple Chat: No initial selected key found for user {user_id}, provider {provider_key_name}.")
+        except Exception as e:
+            logger.exception(f"Simple Chat: Error fetching initial key ID for user {user_id}, provider {provider_key_name}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve initial key information for simple chat.")
+
+        # --- Logic Gọi API và Failover ---
+        current_api_key = provider_api_keys.get(provider_key_name)
+        current_key_id = initial_key_id
+        tried_key_ids: Set[str] = set()
+        if current_key_id:
+            tried_key_ids.add(current_key_id)
+
+        if not current_api_key and initial_key_id:
+             try:
+                 key_db_res = supabase.table("user_provider_keys") \
+                     .select("api_key_encrypted") \
+                     .eq("id", initial_key_id) \
+                     .eq("user_id", user_id) \
+                     .maybe_single() \
+                     .execute()
+                 if key_db_res and key_db_res.data:
+                     encrypted_key = key_db_res.data.get("api_key_encrypted")
+                     if encrypted_key:
+                         encryption_key = get_encryption_key()
+                         f = Fernet(base64.urlsafe_b64encode(encryption_key))
+                         current_api_key = f.decrypt(encrypted_key.encode()).decode()
+                         logger.info(f"Simple Chat: Successfully fetched and decrypted selected key {initial_key_id} from DB.")
+                     else:
+                         logger.error(f"Simple Chat: Selected key {initial_key_id} found but has no encrypted key data.")
+                 else:
+                     logger.error(f"Simple Chat: Could not fetch selected key {initial_key_id} details from DB.")
+             except Exception as fetch_e:
+                 logger.exception(f"Simple Chat: Error fetching/decrypting selected key {initial_key_id}: {fetch_e}")
+
+        # Vòng lặp failover liên tục
+        while True:
+            if not current_api_key or not current_key_id:
+                logger.warning(f"Simple Chat: No API key available at the start of this attempt. Attempting failover.")
+                failover_start_key_id = current_key_id if current_key_id else f"no-key-yet-simple-{uuid.uuid4()}"
+                error_code = 400
+                error_message = "Missing or failed to load API key"
+
+                new_key_info = await attempt_automatic_failover(
+                    user_id, provider_key_name, failover_start_key_id, error_code, error_message, supabase
                 )
-                if response_text is None: response_text = ""
-                elif not isinstance(response_text, str): response_text = str(response_text)
-                return response_text, original_model_name
-            except ValueError as e:
-                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Gemini API Key Error: {e}")
-            except HTTPException as e:
-                raise e
-            except Exception as e:
-                logging.exception(f"Error processing simple Gemini chat request for model {original_model_name}: {e}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with Gemini: {e}")
 
-        elif provider == "x-ai":
-            api_key = provider_api_keys.get("xai") # Changed "grok" to "xai"
+                if new_key_info:
+                    next_key_id = new_key_info['id']
+                    if next_key_id in tried_key_ids:
+                        logger.error(f"Simple Chat: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                    else:
+                        current_key_id = next_key_id
+                        current_api_key = new_key_info['api_key']
+                        tried_key_ids.add(current_key_id)
+                        logger.info(f"Simple Chat: Failover selected initial/next key: {current_key_id}")
+                else:
+                    logger.error(f"Simple Chat: Failover could not find any usable key for provider {provider_key_name}.")
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"No usable API key available for provider {provider_key_name}.")
+
+            # --- Thực hiện gọi API ---
+            display_key_id = current_key_id if current_key_id else "unknown"
+            logger.info(f"Simple Chat Attempt: Calling provider {provider_key_name} with key_id {display_key_id}")
             try:
-                service = GrokService(api_key=api_key)
-                openai_messages = ModelRouter._convert_simple_to_openai(message, history)
-                response_payload = await service.create_chat_completion(
-                    model=base_model_name,
-                    messages=openai_messages,
-                    stream=False
-                )
-                response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
-                return response_text, original_model_name
-            except ValueError as e:
-                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Grok API Key Error: {e}")
-            except HTTPException as e:
-                raise e
-            except Exception as e:
-                logging.exception(f"Error processing simple Grok chat request for model {original_model_name}: {e}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with Grok: {e}")
+                if provider_key_name == "google":
+                    service = GeminiService(api_key=current_api_key, model=base_model_name)
+                    response_text, _ = await service.generate_text_response(message=message, history=history, model=base_model_name)
+                    if response_text is None: response_text = ""
+                    elif not isinstance(response_text, str): response_text = str(response_text)
+                    logger.info(f"Simple Chat: Success with key {display_key_id}")
+                    return response_text, original_model_name
 
-        elif provider == "gigachat":
-            auth_key = provider_api_keys.get("gigachat")
-            # Removed key existence check since GigaChatService handles fallback
-            try:
-                # Initialize service and let it handle fallback
-                service = GigaChatService(auth_key=auth_key)
-                openai_messages = ModelRouter._convert_simple_to_openai(message, history)
-                response_payload = await service.create_chat_completion(
-                    model=base_model_name,
-                    messages=openai_messages,
-                    stream=False
-                )
-                response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
-                return response_text, original_model_name
-            except ValueError as e:
-                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"GigaChat Auth Key Error: {e}")
-            except HTTPException as e:
-                raise e
-            except Exception as e:
-                logging.exception(f"Error processing simple GigaChat chat request for model {original_model_name}: {e}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with GigaChat: {e}")
+                elif provider_key_name == "xai":
+                    service = GrokService(api_key=current_api_key)
+                    openai_messages = ModelRouter._convert_simple_to_openai(message, history)
+                    response_payload = await service.create_chat_completion(model=base_model_name, messages=openai_messages, stream=False)
+                    response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    logger.info(f"Simple Chat: Success with key {display_key_id}")
+                    return response_text, original_model_name
 
-        elif provider == "perplexity":
-            api_key = provider_api_keys.get("perplexity")
-            try:
-                service = SonarService(api_key=api_key, model=base_model_name)
-                response_text, model_used = await service.generate_text_response(
-                    message=message,
-                    history=history,
-                    model=base_model_name
-                )
-                if response_text is None: response_text = ""
-                elif not isinstance(response_text, str): response_text = str(response_text)
-                return response_text, original_model_name
-            except ValueError as e:
-                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Perplexity API Key Error: {e}")
-            except HTTPException as e:
-                raise e
-            except Exception as e:
-                logging.exception(f"Error processing simple Perplexity chat request for model {original_model_name}: {e}")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating chat response with Perplexity Sonar: {e}")
+                elif provider_key_name == "gigachat":
+                    service = GigaChatService(auth_key=current_api_key)
+                    openai_messages = ModelRouter._convert_simple_to_openai(message, history)
+                    response_payload = await service.create_chat_completion(model=base_model_name, messages=openai_messages, stream=False)
+                    response_text = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    logger.info(f"Simple Chat: Success with key {display_key_id}")
+                    return response_text, original_model_name
 
-        logging.error(f"Internal routing error: Unhandled provider '{provider}' for model '{original_model_name}'")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during model routing.")
+                elif provider_key_name == "perplexity":
+                    service = SonarService(api_key=current_api_key, model=base_model_name)
+                    response_text, _ = await service.generate_text_response(message=message, history=history, model=base_model_name)
+                    if response_text is None: response_text = ""
+                    elif not isinstance(response_text, str): response_text = str(response_text)
+                    logger.info(f"Simple Chat: Success with key {display_key_id}")
+                    return response_text, original_model_name
+
+                logger.error(f"Internal simple chat routing error after check: Unhandled provider '{provider_key_name}'")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during simple chat model routing.")
+
+            # --- Xử lý lỗi và Failover ---
+            except (HTTPException, ValueError) as e:
+                logger.warning(f"Simple Chat Attempt with key {display_key_id} failed - Type: {type(e).__name__}, Detail: {e}")
+                error_code = 500
+                error_message = str(e)
+                is_key_error = False
+
+                if isinstance(e, HTTPException):
+                    error_code = e.status_code
+                    error_message = e.detail
+                    # Sửa đổi: Coi 400 từ 'xai' là lỗi key
+                    is_key_error = error_code in [401, 403, 429] or \
+                                   (error_code == 400 and ("API key" in str(error_message).lower() or "api key not valid" in str(error_message).lower())) or \
+                                   (provider_key_name == "xai" and error_code == 400) # Thêm điều kiện cho Grok 400
+                elif isinstance(e, ValueError):
+                    if "API key not valid" in error_message.lower() or "invalid api key" in error_message.lower():
+                        is_key_error = True
+                        error_code = 401
+                        logger.warning(f"Simple Chat: Caught ValueError indicating invalid API key: {error_message}")
+                    else:
+                         logger.exception(f"Simple Chat: Caught non-key ValueError: {e}")
+                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid value encountered: {e}")
+
+                if is_key_error:
+                    logger.warning(f"Simple Chat Key error detected (Status: {error_code}) with key {display_key_id}. Attempting failover...")
+
+                    failover_start_key_id_for_attempt = current_key_id
+                    if not failover_start_key_id_for_attempt:
+                         logger.error(f"Simple Chat: Cannot perform failover because the ID of the failed key is unknown.")
+                         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}")
+
+                    new_key_info = await attempt_automatic_failover(
+                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase
+                    )
+
+                    if new_key_info:
+                        next_key_id = new_key_info['id']
+                        if next_key_id in tried_key_ids:
+                            logger.error(f"Simple Chat: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="All available provider keys failed or are temporarily disabled (cycle detected).")
+                        else:
+                            current_key_id = next_key_id
+                            current_api_key = new_key_info['api_key']
+                            tried_key_ids.add(current_key_id)
+                            logger.info(f"Simple Chat Failover successful. Trying next key_id: {current_key_id}")
+                            continue
+                    else:
+                        logger.error(f"Simple Chat Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted.")
+                        log_key_id_on_exhaust = current_key_id
+                        if log_key_id_on_exhaust:
+                            await log_activity_db(
+                                user_id=user_id, provider_name=provider_key_name, key_id=log_key_id_on_exhaust,
+                                action="FAILOVER_EXHAUSTED", details=f"All keys failed. Last error on this key: {error_code}",
+                                supabase=supabase
+                            )
+                        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"All provider keys failed or are temporarily disabled. Last error: {error_code} - {error_message}")
+                else:
+                    logger.error(f"Simple Chat: Non-key error encountered. Raising.")
+                    raise e
+
+            except Exception as e:
+                 logger.exception(f"Simple Chat: Unexpected error during API call with key {display_key_id}: {e}")
+                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {e}")
+
+        logger.error("Simple Chat: Exited failover loop unexpectedly.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during simple chat failover process.")
+
 
     @staticmethod
     async def stream_chat_completion(
@@ -528,15 +786,13 @@ class ModelRouter:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         provider_api_keys: Dict[str, str] = None,
-        # Thêm các tham số cần thiết cho failover
         supabase: Optional[Client] = None,
         auth_info: Optional[Dict[str, Any]] = None
     ) -> AsyncGenerator[str, None]:
         """
-        Định tuyến và stream yêu cầu chat completion, hỗ trợ failover.
+        Định tuyến và stream yêu cầu chat completion, hỗ trợ failover liên tục.
         Yields Server-Sent Events (SSE) formatted strings.
         """
-        # --- Phần kiểm tra và lấy thông tin ban đầu (tương tự route_chat_completion) ---
         if supabase is None or auth_info is None:
              error_payload = {"error": {"message": "Internal configuration error: Supabase client or Auth info missing for failover.", "type": "internal_server_error", "code": 500}}
              yield f"data: {json.dumps(error_payload)}\n\n"
@@ -544,9 +800,8 @@ class ModelRouter:
              return
 
         user_id = auth_info.get("user_id")
-        auth_token = auth_info.get("token")
-        if not user_id or not auth_token:
-             error_payload = {"error": {"message": "Internal configuration error: User ID or Auth token missing for failover.", "type": "internal_server_error", "code": 500}}
+        if not user_id:
+             error_payload = {"error": {"message": "Internal configuration error: User ID missing for failover.", "type": "internal_server_error", "code": 500}}
              yield f"data: {json.dumps(error_payload)}\n\n"
              yield "data: [DONE]\n\n"
              return
@@ -558,25 +813,23 @@ class ModelRouter:
         base_model_name = ModelRouter._strip_provider_prefix(model)
 
         try:
-            provider_name = ModelRouter._determine_provider(model) # Get the logical provider name (e.g., "gigachat")
-            provider_map = {"google": "google", "x-ai": "xai", "gigachat": "gigachat", "perplexity": "perplexity"} # Map logical name to key name
+            provider_name = ModelRouter._determine_provider(model)
+            provider_map = {"google": "google", "x-ai": "xai", "gigachat": "gigachat", "perplexity": "perplexity"}
             provider_key_name = provider_map.get(provider_name)
             if not provider_key_name:
-                 # This should ideally not happen if _determine_provider works correctly
                  raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider '{provider_name}' for model '{model}'")
         except HTTPException as e:
-            logging.warning(f"Streaming requested for model with unknown provider: {model} - Error: {e.detail}")
+            logger.warning(f"Streaming requested for model with unknown provider: {model} - Error: {e.detail}")
             error_payload = {"error": {"message": e.detail, "type": "invalid_request_error", "code": e.status_code}}
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
             return
 
-        logging.info(f"Routing stream request for model: {original_model_name} (Provider Key Name: {provider_key_name}, Base Model: {base_model_name})")
+        logger.info(f"Routing stream request for model: {original_model_name} (Provider Key Name: {provider_key_name}, Base Model: {base_model_name})")
 
         # --- Lấy ID của key ban đầu ---
         initial_key_id: Optional[str] = None
         try:
-            # Xóa await ở đây
             key_res = supabase.table("user_provider_keys").select("id") \
                 .eq("user_id", user_id) \
                 .eq("provider_name", provider_key_name) \
@@ -584,23 +837,12 @@ class ModelRouter:
                 .limit(1) \
                 .maybe_single() \
                 .execute()
-            # Kiểm tra xem key_res có tồn tại không TRƯỚC KHI truy cập .data
-            if key_res:
-                if key_res.data:
-                    initial_key_id = str(key_res.data['id'])
-                else:
-                    # Trường hợp key_res tồn tại nhưng data rỗng (ít khả năng với maybe_single)
-                    logging.warning(f"No initial selected key found (empty data) for stream: user {user_id}, provider {provider_key_name}.")
+            if key_res and key_res.data:
+                initial_key_id = str(key_res.data['id'])
             else:
-                # Trường hợp key_res là None (do lỗi execute, ví dụ 406)
-                logging.error(f"Supabase query for initial key failed for stream: user {user_id}, provider {provider_key_name}. Response was None.")
-                # Gửi lỗi SSE cho client
-                error_payload = {"error": {"message": f"Failed to query initial key for provider {provider_key_name}. Check Supabase connection/permissions.", "type": "internal_server_error", "code": 500}}
-                yield f"data: {json.dumps(error_payload)}\n\n"
-                yield "data: [DONE]\n\n"
-                return # Thoát khỏi hàm vì không thể tiếp tục
+                logger.warning(f"Stream: No initial selected key found for user {user_id}, provider {provider_key_name}.")
         except Exception as e:
-            logging.exception(f"Error fetching initial key ID for stream: user {user_id}, provider {provider_key_name}: {e}")
+            logger.exception(f"Stream: Error fetching initial key ID for user {user_id}, provider {provider_key_name}: {e}")
             error_payload = {"error": {"message": "Failed to retrieve initial key information.", "type": "internal_server_error", "code": 500}}
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
@@ -609,89 +851,83 @@ class ModelRouter:
         # --- Logic Gọi API Stream và Failover ---
         current_api_key = provider_api_keys.get(provider_key_name)
         current_key_id = initial_key_id
+        tried_key_ids: Set[str] = set()
+        if current_key_id:
+            tried_key_ids.add(current_key_id)
 
-        if not current_api_key:
-            logging.warning(f"No API key found in initial request dict for provider {provider_key_name}. Checking DB for selected key ID: {initial_key_id}")
-            if initial_key_id:
-                # Try to fetch the selected key directly from DB since it wasn't provided
-                try:
-                    key_db_res = supabase.table("user_provider_keys") \
-                        .select("api_key_encrypted") \
-                        .eq("id", initial_key_id) \
-                        .eq("user_id", user_id) \
-                        .maybe_single() \
-                        .execute()
-
-                    if key_db_res and key_db_res.data:
-                        encrypted_key = key_db_res.data.get("api_key_encrypted")
-                        if encrypted_key:
-                            try:
-                                # Decrypt the key fetched from DB using Fernet
-                                encryption_key = get_encryption_key()
-                                f = Fernet(base64.urlsafe_b64encode(encryption_key))
-                                current_api_key = f.decrypt(encrypted_key.encode()).decode()
-                                logging.info(f"Successfully fetched and decrypted selected key {initial_key_id} from DB.")
-                                # Now current_api_key is set, proceed to the API call attempt
-                            except Exception as decrypt_e:
-                                logging.exception(f"Failed to decrypt the selected key {initial_key_id} from DB: {decrypt_e}")
-                                error_payload = {"error": {"message": f"Failed to decrypt stored API key for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
-                                yield f"data: {json.dumps(error_payload)}\n\n"
-                                yield "data: [DONE]\n\n"
-                                return
-                        else:
-                            logging.error(f"Selected key {initial_key_id} found in DB but has no encrypted key data.")
-                            error_payload = {"error": {"message": f"Stored API key data is missing for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
-                            yield f"data: {json.dumps(error_payload)}\n\n"
-                            yield "data: [DONE]\n\n"
-                            return
+        if not current_api_key and initial_key_id:
+            logger.warning(f"Stream: No API key found in initial request dict for provider {provider_key_name}. Checking DB for selected key ID: {initial_key_id}")
+            try:
+                key_db_res = supabase.table("user_provider_keys") \
+                    .select("api_key_encrypted") \
+                    .eq("id", initial_key_id) \
+                    .eq("user_id", user_id) \
+                    .maybe_single() \
+                    .execute()
+                if key_db_res and key_db_res.data:
+                    encrypted_key = key_db_res.data.get("api_key_encrypted")
+                    if encrypted_key:
+                        try:
+                            encryption_key = get_encryption_key()
+                            f = Fernet(base64.urlsafe_b64encode(encryption_key))
+                            current_api_key = f.decrypt(encrypted_key.encode()).decode()
+                            logger.info(f"Stream: Successfully fetched and decrypted selected key {initial_key_id} from DB.")
+                        except Exception as decrypt_e:
+                            logger.exception(f"Stream: Failed to decrypt the selected key {initial_key_id} from DB: {decrypt_e}")
                     else:
-                        logging.error(f"Could not fetch the selected key {initial_key_id} details from DB despite having its ID.")
-                        error_payload = {"error": {"message": f"Failed to retrieve stored API key details for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
+                        logger.error(f"Stream: Selected key {initial_key_id} found in DB but has no encrypted key data.")
+                else:
+                    logger.error(f"Stream: Could not fetch the selected key {initial_key_id} details from DB.")
+            except Exception as fetch_e:
+                logger.exception(f"Stream: Error fetching selected key {initial_key_id} details from DB: {fetch_e}")
+
+        # Vòng lặp failover liên tục
+        stream_successful = False
+        while True:
+            service_stream: Optional[AsyncGenerator[str, None]] = None
+            stream_error = None
+
+            if not current_api_key or not current_key_id:
+                logger.warning(f"Stream: No API key available at the start of this attempt. Attempting failover.")
+                failover_start_key_id = current_key_id if current_key_id else f"no-key-yet-stream-{uuid.uuid4()}"
+                error_code = 400
+                error_message = "Missing or failed to load API key"
+
+                new_key_info = await attempt_automatic_failover(
+                    user_id, provider_key_name, failover_start_key_id, error_code, error_message, supabase
+                )
+
+                if new_key_info:
+                    next_key_id = new_key_info['id']
+                    if next_key_id in tried_key_ids:
+                        logger.error(f"Stream: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                        error_payload = {"error": {"message": "All available provider keys failed or are temporarily disabled (cycle detected).", "type": "service_unavailable", "code": 503}}
                         yield f"data: {json.dumps(error_payload)}\n\n"
                         yield "data: [DONE]\n\n"
                         return
-                except Exception as fetch_e:
-                    logging.exception(f"Error fetching selected key {initial_key_id} details from DB: {fetch_e}")
-                    error_payload = {"error": {"message": f"Database error retrieving API key for {provider_key_name}.", "type": "internal_server_error", "code": 500}}
+                    else:
+                        current_key_id = next_key_id
+                        current_api_key = new_key_info['api_key']
+                        tried_key_ids.add(current_key_id)
+                        logger.info(f"Stream: Failover selected initial/next key: {current_key_id}")
+                else:
+                    logger.error(f"Stream: Failover could not find any usable key for provider {provider_key_name}.")
+                    error_payload = {"error": {"message": f"No usable API key available for provider {provider_key_name}.", "type": "service_unavailable", "code": 503}}
                     yield f"data: {json.dumps(error_payload)}\n\n"
                     yield "data: [DONE]\n\n"
                     return
-            else:
-                 # No initial_key_id found AND no key provided in dict -> No key configured
-                 logging.error(f"No initial API key provided and no key selected in DB for provider {provider_key_name}.")
-                 error_payload = {"error": {"message": f"No API key configured or selected for provider {provider_key_name}.", "type": "invalid_request_error", "code": 400}}
-                 yield f"data: {json.dumps(error_payload)}\n\n"
-                 yield "data: [DONE]\n\n"
-                 return
-        # If current_api_key was provided initially OR successfully fetched/decrypted above, continue to the loop
 
-        stream_successful = False # Cờ đánh dấu stream thành công
-        attempt = 0
-        while True: # Loop indefinitely until success or exhaustion
-            attempt += 1
-            logging.info(f"--- Starting attempt {attempt} ---")
-            service_stream: Optional[AsyncGenerator[str, None]] = None
-            stream_successful = False # Reset success flag for each attempt
-
+            # --- Thực hiện gọi API Stream ---
+            display_key_id = current_key_id if current_key_id else "unknown"
+            logger.info(f"Stream Attempt: Calling provider {provider_key_name} with key_id {display_key_id}")
             try:
-                # Ensure we have a key to try for this attempt
-                if not current_api_key or not current_key_id:
-                     logging.error(f"Attempt {attempt}: No valid key available. Provider: {provider_key_name}")
-                     error_payload = {"error": {"message": f"No API key available for provider {provider_key_name}.", "type": "service_unavailable", "code": 503}}
-                     yield f"data: {json.dumps(error_payload)}\n\n"
-                     yield "data: [DONE]\n\n"
-                     return
-
-                logging.info(f"Stream Attempt {attempt}: Calling provider {provider_key_name} with key_id {current_key_id}")
-
                 # --- Setup Service Stream ---
-                logging.info(f"Attempt {attempt}: Setting up service stream...")
                 if provider_key_name == "google":
                     prompt, history = ModelRouter._convert_messages(messages)
                     service = GeminiService(api_key=current_api_key, model=base_model_name)
                     first_chunk = True
                     async def google_sse_wrapper():
-                        nonlocal first_chunk
+                        nonlocal first_chunk, stream_error
                         try:
                             async for chunk_text in service.stream_text_response(message=prompt, history=history, model=base_model_name):
                                 if chunk_text is None: continue
@@ -711,12 +947,12 @@ class ModelRouter:
                                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
                             }
                             yield f"data: {json.dumps(final_chunk_payload, ensure_ascii=False)}\n\n"
-                        except HTTPException as gemini_e:
-                             logging.error(f"HTTPException within Gemini stream wrapper: {gemini_e.status_code} - {gemini_e.detail}")
-                             raise gemini_e
+                        except (HTTPException, ValueError) as gemini_e:
+                             logger.error(f"Error within Gemini stream wrapper: {type(gemini_e).__name__} - {gemini_e}")
+                             stream_error = gemini_e
                         except Exception as gemini_e:
-                             logging.exception("Unexpected error within Gemini stream wrapper")
-                             raise HTTPException(status_code=500, detail=f"Unexpected Gemini stream error: {gemini_e}")
+                             logger.exception("Unexpected error within Gemini stream wrapper")
+                             stream_error = HTTPException(status_code=500, detail=f"Unexpected Gemini stream error: {gemini_e}")
                     service_stream = google_sse_wrapper()
 
                 elif provider_key_name == "xai":
@@ -732,90 +968,110 @@ class ModelRouter:
                     service_stream = service.stream_chat_completion(messages=messages, model=base_model_name, temperature=temperature, max_tokens=max_tokens)
 
                 else:
-                     logging.error(f"Internal streaming routing error: Unhandled provider key name '{provider_key_name}'")
-                     error_payload = {"error": {"message": "Internal server error during streaming model routing.", "type": "internal_server_error", "code": 500}}
-                     yield f"data: {json.dumps(error_payload)}\n\n"
-                     yield "data: [DONE]\n\n"
-                     return
-
-                logging.info(f"Attempt {attempt}: Service stream setup done.")
+                     logger.error(f"Internal streaming routing error: Unhandled provider key name '{provider_key_name}'")
+                     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during streaming model routing.")
 
                 # --- Iterate through the stream ---
                 if not service_stream:
-                     # Should not happen if setup was successful, but check anyway
-                     logging.error(f"Attempt {attempt}: Failed to initialize service stream (service_stream is None).")
                      raise HTTPException(status_code=500, detail="Failed to initialize provider service stream.")
 
-                logging.info(f"Attempt {attempt}: Entering stream iteration...")
+                logger.info(f"Stream Attempt: Entering stream iteration...")
                 async for chunk in service_stream:
                     yield chunk
+                logger.info(f"Stream Attempt: Stream iteration finished.")
 
-                # If the loop completes without raising an exception, it was successful
-                logging.info(f"Attempt {attempt}: Stream iteration finished successfully.")
+                if stream_error:
+                     raise stream_error
+
                 stream_successful = True
-                break # Exit the while loop on success
+                logger.info(f"--- Stream completed successfully with key {display_key_id}. ---")
+                yield "data: [DONE]\n\n"
+                return
 
-            # --- Exception Handling for the entire attempt (setup + iteration) ---
-            except HTTPException as e:
-                logging.error(f"Attempt {attempt}: Caught HTTPException: {e.status_code} - {e.detail}")
-                error_code = e.status_code
-                error_message = e.detail
-                # Updated check for key-related errors
-                is_key_error = error_code in [401, 403, 429] or \
-                               (error_code == 400 and ("API key" in str(error_message).lower() or "permission denied" in str(error_message).lower() or "Incorrect API key" in str(error_message)))
+            # --- Xử lý lỗi và Failover ---
+            except (HTTPException, ValueError) as e:
+                logger.warning(f"Stream Attempt with key {display_key_id} failed - Type: {type(e).__name__}, Detail: {e}")
+                error_code = 500
+                error_message = str(e)
+                is_key_error = False
 
-                if is_key_error and current_key_id:
-                    logging.warning(f"Stream Key error detected (Status: {error_code}) on key {current_key_id}. Attempting failover...")
-                    # --- Failover Logic ---
-                    new_key_info = await attempt_automatic_failover(
-                        user_id, provider_key_name, current_key_id, error_code, error_message, supabase
-                    )
-                    if new_key_info:
-                        current_key_id = new_key_info['id']
-                        current_api_key = new_key_info['api_key']
-                        logging.info(f"Stream Failover successful. Continuing loop with new key_id: {current_key_id}")
-                        continue # Go to the next iteration of the while loop
+                if isinstance(e, HTTPException):
+                    error_code = e.status_code
+                    error_message = e.detail
+                    # Sửa đổi: Coi 400 từ 'xai' là lỗi key
+                    is_key_error = error_code in [401, 403, 429] or \
+                                   (error_code == 400 and ("API key" in str(error_message).lower() or "api key not valid" in str(error_message).lower())) or \
+                                   (provider_key_name == "xai" and error_code == 400) # Thêm điều kiện cho Grok 400
+                elif isinstance(e, ValueError):
+                    if "API key not valid" in error_message.lower() or "invalid api key" in error_message.lower():
+                        is_key_error = True
+                        error_code = 401
+                        logger.warning(f"Stream: Caught ValueError indicating invalid API key: {error_message}")
                     else:
-                        # Failover failed - no more keys
-                        logging.error(f"Stream Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted after key {current_key_id} failed.")
-                        await log_activity_db(
-                            user_id=user_id, provider_name=provider_key_name, key_id=current_key_id,
-                            action="FAILOVER_EXHAUSTED",
-                            description=f"All keys failed for provider {provider_key_name}. Last error: {error_code}",
-                            supabase=supabase
-                        )
-                        error_payload = {"error": {"message": f"All provider keys failed or are temporarily disabled for {provider_key_name}. Last error: {error_code}", "type": "service_unavailable", "code": 503}}
+                        logger.exception(f"Stream: Caught non-key ValueError: {e}")
+                        error_payload = {"error": {"message": f"Invalid value encountered during stream: {e}", "type": "invalid_request_error", "code": 400}}
                         yield f"data: {json.dumps(error_payload)}\n\n"
                         yield "data: [DONE]\n\n"
-                        return # Exit generator
+                        return
+
+                if is_key_error:
+                    logger.warning(f"Stream Key error detected (Status: {error_code}) with key {display_key_id}. Attempting failover...")
+
+                    failover_start_key_id_for_attempt = current_key_id
+                    if not failover_start_key_id_for_attempt:
+                         logger.error(f"Stream: Cannot perform failover because the ID of the failed key is unknown.")
+                         error_payload = {"error": {"message": f"Initial API key failed, and no key ID was available to initiate failover. Error: {error_code} - {error_message}", "type": "service_unavailable", "code": 503}}
+                         yield f"data: {json.dumps(error_payload)}\n\n"
+                         yield "data: [DONE]\n\n"
+                         return
+
+                    new_key_info = await attempt_automatic_failover(
+                        user_id, provider_key_name, failover_start_key_id_for_attempt, error_code, error_message, supabase
+                    )
+
+                    if new_key_info:
+                        next_key_id = new_key_info['id']
+                        if next_key_id in tried_key_ids:
+                            logger.error(f"Stream: Failover returned an already tried key ({next_key_id}). Exhausted.")
+                            error_payload = {"error": {"message": "All available provider keys failed or are temporarily disabled (cycle detected).", "type": "service_unavailable", "code": 503}}
+                            yield f"data: {json.dumps(error_payload)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+                        else:
+                            current_key_id = next_key_id
+                            current_api_key = new_key_info['api_key']
+                            tried_key_ids.add(current_key_id)
+                            logger.info(f"Stream Failover successful. Trying next key_id: {current_key_id}")
+                            continue
+                    else:
+                        logger.error(f"Stream Failover failed for user {user_id}, provider {provider_key_name}. All keys exhausted.")
+                        log_key_id_on_exhaust = current_key_id
+                        if log_key_id_on_exhaust:
+                            await log_activity_db(
+                                user_id=user_id, provider_name=provider_key_name, key_id=log_key_id_on_exhaust,
+                                action="FAILOVER_EXHAUSTED", details=f"All keys failed. Last error on this key: {error_code}",
+                                supabase=supabase
+                            )
+                        error_payload = {"error": {"message": f"All provider keys failed or are temporarily disabled for {provider_key_name}. Last error: {error_code} - {error_message}", "type": "service_unavailable", "code": 503}}
+                        yield f"data: {json.dumps(error_payload)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
                 else:
-                    # Error is not a key error, or failover is not possible/applicable
-                    logging.error(f"Attempt {attempt}: Non-key HTTPException occurred ({error_code}) or failover not applicable. Yielding error and stopping.")
-                    logging.exception(f"Unhandled HTTPException details during stream attempt {attempt}: {e}") # Log stack trace
-                    error_payload = {"error": {"message": f"Error during streaming: {error_message}", "type": "api_error", "code": error_code}}
+                    logger.error(f"Stream: Non-key error encountered. Sending error event.")
+                    final_error_code = error_code if error_code != 500 else 503
+                    error_payload = {"error": {"message": f"Error during streaming: {error_message}", "type": "api_error", "code": final_error_code}}
                     yield f"data: {json.dumps(error_payload)}\n\n"
                     yield "data: [DONE]\n\n"
-                    return # Exit generator
+                    return
 
             except Exception as e:
-                 # Catch any other unexpected errors during the attempt
-                 logging.exception(f"Attempt {attempt}: Caught unexpected Exception.")
-                 error_type = "internal_server_error"
-                 error_code = 500
-                 error_message = f"Unexpected error processing stream with {provider_key_name} on attempt {attempt}: {e}"
-                 error_payload = {"error": {"message": error_message, "type": error_type, "code": error_code}}
+                 logger.exception(f"Stream: Unexpected error during API call with key {display_key_id}: {e}")
+                 error_payload = {"error": {"message": f"An unexpected error occurred during stream: {e}", "type": "internal_server_error", "code": 500}}
                  yield f"data: {json.dumps(error_payload)}\n\n"
                  yield "data: [DONE]\n\n"
-                 return # Exit generator
+                 return
 
-        # --- End of while loop ---
-        # This part is only reached if the loop was exited via 'break' (i.e., success)
-        if stream_successful:
-            logging.info(f"--- Stream completed successfully after {attempt} attempt(s). ---")
-            yield "data: [DONE]\n\n"
-        else:
-             # Should not happen if logic is correct, but as a safeguard
-             logging.error("Stream loop exited without success flag set and without returning an error.")
-             error_payload = {"error": {"message": "Internal server error: Stream ended unexpectedly.", "type": "internal_server_error", "code": 500}}
-             yield f"data: {json.dumps(error_payload)}\n\n"
-             yield "data: [DONE]\n\n"
+        logger.error("Stream loop exited without success flag set and without returning an error.")
+        error_payload = {"error": {"message": "Internal server error: Stream ended unexpectedly.", "type": "internal_server_error", "code": 500}}
+        yield f"data: {json.dumps(error_payload)}\n\n"
+        yield "data: [DONE]\n\n"
