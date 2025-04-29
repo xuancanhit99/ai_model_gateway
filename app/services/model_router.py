@@ -381,12 +381,48 @@ class ModelRouter:
             try:
                 if provider_key_name == "google":
                     prompt, history = ModelRouter._convert_messages(messages)
+                    # >>> Thêm kiểm tra prompt rỗng
+                    if not prompt:
+                        logger.error("Chat Completion: No user message found after conversion for Gemini. Cannot proceed.")
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Invalid request: Could not extract a user message to form the prompt for the Gemini model."
+                        )
+                    # <<< Kết thúc kiểm tra
                     service = GeminiService(api_key=current_api_key, model=base_model_name)
                     response_text, _ = await service.generate_text_response(message=prompt, history=history, model=base_model_name)
                     if response_text is None: response_text = ""
                     elif not isinstance(response_text, str): response_text = str(response_text)
-                    prompt_tokens = sum(len(msg.get("content", "").split()) for msg in messages if isinstance(msg.get("content"), str)) * 4 # Rough estimate
-                    completion_tokens = len(response_text.split()) * 4 # Rough estimate
+                    # --- Sử dụng count_tokens chính xác ---
+                    try:
+                        # Định dạng lại messages cho count_tokens nếu cần (giống _convert_messages)
+                        # Hoặc truyền trực tiếp messages nếu count_tokens xử lý được
+                        # Giả sử _convert_messages trả về prompt và history đúng định dạng cho count_tokens
+                        # prompt_content_for_counting, history_for_counting = ModelRouter._convert_messages(messages)
+                        # Cần định dạng lại history cho count_tokens (list of dicts)
+                        formatted_history_for_count = [
+                             {"role": "model" if msg.role == "assistant" else msg.role, "parts": [msg.content]}
+                             for msg in history # history đã được convert bởi _convert_messages
+                        ]
+                        # Nội dung prompt là tin nhắn user cuối cùng
+                        prompt_content_for_counting = prompt # prompt đã được convert bởi _convert_messages
+                        # Đếm prompt tokens (bao gồm system message nếu có và user message cuối)
+                        # Cần kết hợp system message và user message nếu có
+                        content_to_count_prompt = []
+                        if system_message: # system_message lấy từ _convert_messages
+                             content_to_count_prompt.append({"role": "user", "parts": [system_message]}) # Gemini tính system như user? Kiểm tra lại API
+                        content_to_count_prompt.extend(formatted_history_for_count)
+                        content_to_count_prompt.append({"role": "user", "parts": [prompt_content_for_counting]})
+
+                        prompt_tokens = service.count_tokens(content_to_count_prompt)
+
+                        # Đếm completion tokens
+                        completion_tokens = service.count_tokens(response_text) # Đếm text trả về
+                    except Exception as count_e:
+                         logger.error(f"Failed to count tokens accurately for Gemini: {count_e}. Falling back to estimation.")
+                         prompt_tokens = len(prompt) // 4 # Ước tính thô nếu lỗi
+                         completion_tokens = len(response_text) // 4 # Ước tính thô nếu lỗi
+                    # --- Kết thúc sử dụng count_tokens ---
                     response_payload = {
                         "id": f"chatcmpl-gemini-{uuid.uuid4().hex}", "object": "chat.completion", "created": int(time.time()),
                         "model": original_model_name,
@@ -500,51 +536,109 @@ class ModelRouter:
         """
         Chuyển đổi từ định dạng tin nhắn OpenAI sang định dạng Gemini.
         """
+        # >>> Thêm log chi tiết để debug cấu trúc messages đầu vào
+        logger.info(f"--- _convert_messages received raw messages ---")
+        try:
+            # Log an toàn, tránh lỗi nếu messages không phải list hoặc dict
+            if isinstance(messages, list):
+                 for i, msg in enumerate(messages):
+                     if isinstance(msg, dict):
+                         logger.info(f"Message {i}: Role='{msg.get('role')}', Content Type='{type(msg.get('content')).__name__}', Content Snippet='{str(msg.get('content'))[:100]}...'")
+                     else:
+                         logger.info(f"Message {i}: Not a dictionary - Type='{type(msg).__name__}'")
+            else:
+                logger.info(f"Received messages is not a list - Type='{type(messages).__name__}'")
+        except Exception as log_e:
+            logger.error(f"Error logging incoming messages: {log_e}")
+        logger.info(f"--- End of raw messages log ---")
+        # <<< Kết thúc log chi tiết
+
         history = []
         system_message = None
 
         if not messages:
             return "", []
 
-        valid_messages = [m for m in messages if isinstance(m.get("content"), str) and m.get("role")]
+        # --- Sửa đổi để xử lý content dạng list ---
+        processed_messages = []
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict) or not msg.get("role"):
+                logger.warning(f"Skipping invalid message at index {i}: Not a dict or missing role.")
+                continue
 
-        if not valid_messages:
-            return "", []
+            role = msg["role"]
+            content = msg.get("content")
+            extracted_text = None
 
-        for msg in valid_messages:
+            if isinstance(content, str):
+                extracted_text = content
+            elif isinstance(content, list):
+                # Xử lý content dạng list (chuẩn OpenAI mới)
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                if text_parts:
+                    extracted_text = "\n".join(text_parts) # Nối các phần text lại
+            else:
+                 logger.warning(f"Skipping message at index {i} due to unsupported content type: {type(content).__name__}")
+                 continue # Bỏ qua nếu content không phải str hoặc list
+
+            if extracted_text is not None: # Chỉ thêm nếu trích xuất được text
+                 processed_messages.append({"role": role, "content": extracted_text, "original_index": i})
+            else:
+                 logger.warning(f"Could not extract text content from message at index {i}.")
+
+
+        if not processed_messages:
+             logger.warning("No processable messages found after initial filtering.")
+             return "", []
+        # --- Kết thúc sửa đổi ---
+
+
+        # Tìm system message trong processed_messages
+        system_message = None
+        system_message_original_index = -1
+        for msg in processed_messages:
             if msg["role"] == "system":
                 system_message = msg["content"]
-                break
+                system_message_original_index = msg["original_index"]
+                break # Chỉ lấy system message đầu tiên
 
         processed_indices = set()
-        if system_message:
-            for i, msg in enumerate(valid_messages):
-                if msg["role"] == "system":
-                    processed_indices.add(i)
-                    break
+        if system_message is not None:
+             processed_indices.add(system_message_original_index)
 
+
+        # Tìm last user message trong processed_messages
         last_user_message_index = -1
-        for i in range(len(valid_messages) - 1, -1, -1):
-            if valid_messages[i]["role"] == "user":
+        last_user_message_content = None
+        last_user_original_index = -1
+        for i in range(len(processed_messages) - 1, -1, -1):
+            if processed_messages[i]["role"] == "user":
                 last_user_message_index = i
+                last_user_message_content = processed_messages[i]["content"]
+                last_user_original_index = processed_messages[i]["original_index"]
                 break
 
-        if last_user_message_index == -1:
-            logger.warning("No user message found to form the prompt for Gemini.")
+        if last_user_message_index == -1 or last_user_message_content is None:
+            logger.warning("No user message with extractable text found to form the prompt for Gemini.")
             return "", []
 
+        # Tạo prompt
         prompt: str
-        last_user_msg = valid_messages[last_user_message_index]
-        prompt_content = last_user_msg["content"]
         if system_message:
-            prompt = f"{system_message}\n\n{prompt_content}"
+            prompt = f"{system_message}\n\n{last_user_message_content}"
         else:
-            prompt = prompt_content
-        processed_indices.add(last_user_message_index)
+            prompt = last_user_message_content
+        processed_indices.add(last_user_original_index) # Đánh dấu đã xử lý tin nhắn user cuối
 
-        for i, msg in enumerate(valid_messages):
-            if i not in processed_indices and msg["role"] != "system":
-                gemini_role = "user" if msg["role"] == "user" else "model"
+        # Tạo history từ các tin nhắn còn lại
+        for msg in processed_messages:
+            # Bỏ qua nếu đã xử lý (là system hoặc user cuối) hoặc nếu là system (không đưa vào history Gemini)
+            if msg["original_index"] not in processed_indices and msg["role"] != "system":
+                # Chuyển đổi vai trò cho Gemini API
+                gemini_role = "user" if msg["role"] == "user" else "model" # "assistant" -> "model"
                 history.append(ChatMessage(role=gemini_role, content=msg["content"]))
 
         final_history = []
@@ -924,13 +1018,23 @@ class ModelRouter:
                 # --- Setup Service Stream ---
                 if provider_key_name == "google":
                     prompt, history = ModelRouter._convert_messages(messages)
+                    # >>> Thêm kiểm tra prompt rỗng cho streaming
+                    if not prompt:
+                        logger.error("Stream: No user message found after conversion for Gemini. Cannot proceed.")
+                        error_payload = {"error": {"message": "Invalid request: Could not extract a user message to form the prompt for the Gemini model.", "type": "invalid_request_error", "code": 400}}
+                        yield f"data: {json.dumps(error_payload)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return # Dừng generator nếu prompt rỗng
+                    # <<< Kết thúc kiểm tra
                     service = GeminiService(api_key=current_api_key, model=base_model_name)
                     first_chunk = True
                     async def google_sse_wrapper():
                         nonlocal first_chunk, stream_error
+                        accumulated_content = "" # Biến để tích lũy nội dung
                         try:
                             async for chunk_text in service.stream_text_response(message=prompt, history=history, model=base_model_name):
                                 if chunk_text is None: continue
+                                accumulated_content += chunk_text # Tích lũy nội dung
                                 chunk_payload = {
                                     "id": request_id, "object": "chat.completion.chunk", "created": created_time,
                                     "model": original_model_name,
@@ -941,10 +1045,64 @@ class ModelRouter:
                                     first_chunk = False
                                 chunk_payload["choices"][0]["delta"]["content"] = chunk_text
                                 yield f"data: {json.dumps(chunk_payload, ensure_ascii=False)}\n\n"
+
+                            # --- Tính toán usage chính xác ---
+                            prompt_tokens = 0
+                            completion_tokens = 0
+                            try:
+                                # Đếm prompt tokens (sử dụng prompt và history đã convert)
+                                # Cần định dạng lại history cho count_tokens
+                                formatted_history_for_count = [
+                                     {"role": "model" if msg.role == "assistant" else msg.role, "parts": [msg.content]}
+                                     for msg in history # history đã được convert bởi _convert_messages
+                                ]
+                                # Nội dung prompt là tin nhắn user cuối cùng
+                                prompt_content_for_counting = prompt # prompt đã được convert bởi _convert_messages
+                                # Kết hợp system message (nếu có), history, và user message cuối
+                                content_to_count_prompt = []
+                                # Lấy system message từ _convert_messages (cần đảm bảo _convert_messages trả về)
+                                # Giả sử _convert_messages trả về (prompt, history, system_message_content)
+                                # Hoặc tìm lại system message từ messages gốc
+                                system_message_content = None
+                                for m in messages:
+                                     if isinstance(m, dict) and m.get("role") == "system":
+                                          sys_content = m.get("content")
+                                          if isinstance(sys_content, str):
+                                               system_message_content = sys_content
+                                          elif isinstance(sys_content, list):
+                                               sys_text_parts = [item.get("text", "") for item in sys_content if isinstance(item, dict) and item.get("type") == "text"]
+                                               if sys_text_parts: system_message_content = "\n".join(sys_text_parts)
+                                          break # Chỉ lấy system message đầu tiên
+
+                                if system_message_content:
+                                     # Gemini có thể tính system message khác, cần kiểm tra API docs
+                                     # Tạm thời coi như một phần của user prompt đầu tiên hoặc history
+                                     # Nếu tính riêng: service.count_tokens({"role": "user", "parts": [system_message_content]})
+                                     # Nếu gộp vào user:
+                                     content_to_count_prompt.append({"role": "user", "parts": [system_message_content]}) # Thêm system vào đầu
+                                content_to_count_prompt.extend(formatted_history_for_count)
+                                content_to_count_prompt.append({"role": "user", "parts": [prompt_content_for_counting]})
+
+                                prompt_tokens = service.count_tokens(content_to_count_prompt)
+
+                                # Đếm completion tokens từ nội dung tích lũy
+                                completion_tokens = service.count_tokens(accumulated_content)
+                            except Exception as count_e:
+                                 logger.error(f"Failed to count tokens accurately for Gemini stream: {count_e}. Usage will be omitted.")
+                                 prompt_tokens = 0 # Không trả về usage nếu lỗi
+                                 completion_tokens = 0
+
+                            total_tokens = prompt_tokens + completion_tokens
+                            usage_data = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens}
+                            # --- Kết thúc tính toán usage ---
+
+
                             final_chunk_payload = {
                                 "id": request_id, "object": "chat.completion.chunk", "created": created_time,
                                 "model": original_model_name,
-                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                                # Chỉ thêm usage nếu tính toán thành công
+                                **({"usage": usage_data} if total_tokens > 0 else {})
                             }
                             yield f"data: {json.dumps(final_chunk_payload, ensure_ascii=False)}\n\n"
                         except (HTTPException, ValueError) as gemini_e:

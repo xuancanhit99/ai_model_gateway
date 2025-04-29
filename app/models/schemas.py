@@ -66,6 +66,7 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str
+    context_window: Optional[int] = Field(None, description="The maximum context window size for the model (in tokens).") # Thêm trường context_window
 
 class ModelList(BaseModel):
     object: str = "list"

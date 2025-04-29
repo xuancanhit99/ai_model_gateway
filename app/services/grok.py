@@ -387,15 +387,49 @@ class GrokService:
             del payload["max_tokens"]
 
         first_chunk = True
+        final_usage_data = None # Biến để lưu trữ usage nếu có
         try:
             async for line in self._stream_request(payload):
                 if line.strip() == "data: [DONE]":
-                    yield line
+                    # --- Gửi chunk cuối cùng với usage (nếu có) ---
+                    # Tạo một chunk cuối cùng giả định nếu chưa có finish_reason
+                    # Hoặc nếu chunk cuối cùng trước đó không có usage
+                    if final_usage_data:
+                         final_openai_chunk = {
+                             "id": request_id,
+                             "object": "chat.completion.chunk",
+                             "created": created_time,
+                             "model": model,
+                             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], # Giả định stop nếu nhận DONE
+                             "usage": final_usage_data
+                         }
+                         # Kiểm tra xem có cần gửi chunk này không (nếu chunk trước đó đã có finish_reason và usage)
+                         # Tạm thời cứ gửi để đảm bảo usage được gửi
+                         yield f"data: {json.dumps(final_openai_chunk, ensure_ascii=False)}\n\n"
+                    # --- Kết thúc gửi chunk cuối cùng ---
+                    yield line # Gửi data: [DONE]
                     break
                 elif line.startswith("data:"):
                     try:
                         chunk_data_str = line.strip()[len("data: "):]
                         chunk_data = json.loads(chunk_data_str)
+
+                        # --- Trích xuất usage nếu có ---
+                        usage_in_chunk = chunk_data.get("usage")
+                        if usage_in_chunk and isinstance(usage_in_chunk, dict):
+                             # Chỉ lấy các trường token cần thiết
+                             prompt_tokens = usage_in_chunk.get("prompt_tokens")
+                             completion_tokens = usage_in_chunk.get("completion_tokens")
+                             total_tokens = usage_in_chunk.get("total_tokens")
+                             if prompt_tokens is not None and completion_tokens is not None and total_tokens is not None:
+                                  final_usage_data = {
+                                       "prompt_tokens": prompt_tokens,
+                                       "completion_tokens": completion_tokens,
+                                       "total_tokens": total_tokens
+                                  }
+                                  logging.info(f"Grok stream received usage data: {final_usage_data}")
+                        # --- Kết thúc trích xuất usage ---
+
 
                         openai_chunk = {
                             "id": request_id,
@@ -407,6 +441,7 @@ class GrokService:
                                 "delta": {},
                                 "finish_reason": None
                             }]
+                            # Không thêm usage vào các chunk trung gian
                         }
 
                         grok_delta = chunk_data.get("choices", [{}])[0].get("delta", {})
@@ -423,11 +458,17 @@ class GrokService:
 
                         if grok_content is not None:
                             openai_chunk["choices"][0]["delta"]["content"] = grok_content
-                            first_chunk = False
+                            first_chunk = False # Đảm bảo first_chunk là false nếu có content
 
                         if finish_reason:
                             openai_chunk["choices"][0]["finish_reason"] = finish_reason
+                            # --- Nếu chunk cuối cùng có usage, thêm vào đây ---
+                            if final_usage_data:
+                                 openai_chunk["usage"] = final_usage_data
+                            # --- Kết thúc thêm usage vào chunk cuối ---
 
+
+                        # Chỉ gửi chunk nếu có delta hoặc finish_reason
                         if openai_chunk["choices"][0]["delta"] or openai_chunk["choices"][0]["finish_reason"]:
                             yield f"data: {json.dumps(openai_chunk, ensure_ascii=False)}\n\n"
 

@@ -255,3 +255,41 @@ class GeminiService:
                 logging.exception(f"Unexpected error during Gemini streaming generation: {e}")
                 # Raise a 500 error that ModelRouter can potentially handle or yield as an error chunk
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error during Gemini streaming: {e}")
+
+    # --- Thêm phương thức đếm token (Đã sửa thụt lề) ---
+    def count_tokens(self, content: str | list) -> int:
+        """
+        Counts the number of tokens in the given content using the initialized Gemini model.
+
+        Args:
+            content: The content to count tokens for. Can be a string or a list
+                     of content parts compatible with the Gemini API (e.g., history format).
+
+        Returns:
+            The number of tokens.
+
+        Raises:
+            ValueError: If the model is not initialized or token counting fails.
+        """
+        if not self.genai_model:
+            raise ValueError("Gemini model not initialized for token counting.")
+
+        try:
+            # count_tokens can accept a string, dict, or list of dicts
+            token_count = self.genai_model.count_tokens(content)
+            # The result might be an object with a total_tokens attribute
+            if hasattr(token_count, 'total_tokens'):
+                 return token_count.total_tokens
+            elif isinstance(token_count, int): # Fallback if it directly returns an int (older versions?)
+                 return token_count
+            else:
+                 # Handle unexpected return type
+                 # logging should be imported at the top level
+                 logging.error(f"Unexpected return type from count_tokens: {type(token_count)}")
+                 raise ValueError("Failed to get token count from the count_tokens response.")
+
+        except Exception as e:
+            # logging should be imported at the top level
+            logging.exception(f"Error counting Gemini tokens for model {self.model_id}: {e}")
+            # Re-raise as ValueError or a more specific custom exception if needed
+            raise ValueError(f"Failed to count tokens using Gemini model {self.model_id}: {e}")
