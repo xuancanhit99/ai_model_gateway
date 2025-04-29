@@ -552,42 +552,39 @@ const ProviderKeyList: React.FC = () => {
             <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
           )}
 
-          {providerKeys.length === 0 && !loading && !error ? (
-             <Alert severity="info">{t('providerView.noKeys')}</Alert>
-          ) : (
-            <Box>
-              {providerGroups.map((group) => (
-                <Card key={group.providerName} sx={{ mb: 2 }}>
-                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                    <ProviderGroupHeader
-                      providerName={group.providerName}
-                      displayName={group.displayName}
-                      count={group.count}
-                      hasSelectedKey={group.hasSelectedKey}
-                      isExpanded={!!expandedProviders[group.providerName]}
-                      onToggleExpand={toggleProviderExpanded}
-                      onDeleteAll={handleDeleteAllKeysForProvider}
-                    />
-                  </CardContent>
-                  <Collapse in={!!expandedProviders[group.providerName]}>
-                    <ProviderKeyTable
-                      keys={getFilteredKeysForProvider(group.keys, group.providerName)}
-                      providerName={group.providerName}
-                      searchTerm={searchTerms[group.providerName] || ''}
-                      importing={!!importing[group.providerName]}
-                      fileInputRef={el => fileInputRefs.current[group.providerName] = el} 
-                      onSearchChange={handleSearchTermChange}
-                      onImportClick={handleImportClick}
-                      onFileChange={handleCsvFileChange}
-                      onSelectKey={handleSelectKey}
-                      onDeleteKey={handleDeleteKey}
-                      onAddKeyClick={handleAddKeyClick} // Thêm prop onAddKeyClick
-                    />
-                  </Collapse>
-                </Card>
-              ))}
-            </Box>
-          )}
+          {/* Luôn render Box chứa các group, ngay cả khi providerKeys ban đầu rỗng */}
+          <Box>
+            {providerGroups.map((group) => (
+              <Card key={group.providerName} sx={{ mb: 2 }}>
+                <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                  <ProviderGroupHeader
+                    providerName={group.providerName}
+                    displayName={group.displayName}
+                    count={group.count} // Sẽ là 0 nếu không có key
+                    hasSelectedKey={group.hasSelectedKey} // Sẽ là false nếu không có key
+                    isExpanded={!!expandedProviders[group.providerName]}
+                    onToggleExpand={toggleProviderExpanded}
+                    onDeleteAll={handleDeleteAllKeysForProvider}
+                  />
+                </CardContent>
+                <Collapse in={!!expandedProviders[group.providerName]}>
+                  <ProviderKeyTable
+                    keys={getFilteredKeysForProvider(group.keys, group.providerName)} // Sẽ là mảng rỗng nếu không có key
+                    providerName={group.providerName}
+                    searchTerm={searchTerms[group.providerName] || ''}
+                    importing={!!importing[group.providerName]}
+                    fileInputRef={el => fileInputRefs.current[group.providerName] = el}
+                    onSearchChange={handleSearchTermChange}
+                    onImportClick={handleImportClick}
+                    onFileChange={handleCsvFileChange}
+                    onSelectKey={handleSelectKey}
+                    onDeleteKey={handleDeleteKey}
+                    onAddKeyClick={handleAddKeyClick} // Nút Add sẽ hiển thị trong ProviderKeyTable
+                  />
+                </Collapse>
+              </Card>
+            ))}
+          </Box>
         </Box>
 
         {/* Right Column: About Section */}
