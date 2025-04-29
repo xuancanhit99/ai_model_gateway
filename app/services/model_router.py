@@ -185,11 +185,13 @@ class ModelRouter:
         provider_api_keys = provider_api_keys or {}
         original_model_name = model
         base_model_name = ModelRouter._strip_provider_prefix(model)
-        provider_map = {"google": "google", "x-ai": "xai", "sber": "gigachat", "perplexity": "perplexity"} # Changed "grok" to "xai"
-        provider_key_name = provider_map.get(ModelRouter._determine_provider(model)) # Tên key trong dict (google, xai, gigachat, perplexity)
+        provider_name = ModelRouter._determine_provider(model) # Get the logical provider name (e.g., "gigachat")
+        provider_map = {"google": "google", "x-ai": "xai", "gigachat": "gigachat", "perplexity": "perplexity"} # Map logical name to key name
+        provider_key_name = provider_map.get(provider_name) # Tên key trong dict (google, xai, gigachat, perplexity)
 
         if not provider_key_name:
-             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider for model '{model}'")
+             # This should ideally not happen if _determine_provider works correctly
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider '{provider_name}' for model '{model}'")
 
         logging.info(f"Routing chat completion for model: {original_model_name} (Provider Key Name: {provider_key_name}, Base Model: {base_model_name})")
 
@@ -556,10 +558,12 @@ class ModelRouter:
         base_model_name = ModelRouter._strip_provider_prefix(model)
 
         try:
-            provider_map = {"google": "google", "x-ai": "xai", "sber": "gigachat", "perplexity": "perplexity"} # Changed "grok" to "xai"
-            provider_key_name = provider_map.get(ModelRouter._determine_provider(model))
+            provider_name = ModelRouter._determine_provider(model) # Get the logical provider name (e.g., "gigachat")
+            provider_map = {"google": "google", "x-ai": "xai", "gigachat": "gigachat", "perplexity": "perplexity"} # Map logical name to key name
+            provider_key_name = provider_map.get(provider_name)
             if not provider_key_name:
-                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider for model '{model}'")
+                 # This should ideally not happen if _determine_provider works correctly
+                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not map provider '{provider_name}' for model '{model}'")
         except HTTPException as e:
             logging.warning(f"Streaming requested for model with unknown provider: {model} - Error: {e.detail}")
             error_payload = {"error": {"message": e.detail, "type": "invalid_request_error", "code": e.status_code}}
