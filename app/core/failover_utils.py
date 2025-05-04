@@ -100,34 +100,49 @@ async def attempt_automatic_failover(
             logger.error(f"Failed key {failed_key_id} not found in user's keys for provider {provider_name}.")
             return None
 
-        # Lấy các key KHẢ DỤNG (không bị khóa)
-        # Sử dụng RPC hoặc lọc phía client nếu lọc IS NULL OR <= NOW() phức tạp
-        # Cách đơn giản: Lọc IS NULL
-        # Xóa await ở đây
-        available_keys_res = supabase.table("user_provider_keys") \
-            .select("id, api_key_encrypted, created_at") \
+        # THAY ĐỔI: Lấy tất cả key kèm trạng thái disabled_until thay vì chỉ lấy key có disabled_until là NULL
+        all_available_keys_res = supabase.table("user_provider_keys") \
+            .select("id, api_key_encrypted, created_at, disabled_until") \
             .eq("user_id", user_id) \
             .eq("provider_name", provider_name) \
-            .is_("disabled_until", "null") \
             .order("created_at", desc=False) \
             .execute()
 
-        available_keys = available_keys_res.data if hasattr(available_keys_res, 'data') else []
+        all_available_keys = all_available_keys_res.data if hasattr(all_available_keys_res, 'data') else []
 
-        # Lọc thêm các key có disabled_until <= NOW() trong Python nếu cần
+        # THAY ĐỔI: Lọc key dựa trên cả hai điều kiện: NULL hoặc thời gian vô hiệu hóa đã hết
         now_utc = datetime.now(timezone.utc)
-        truly_available_keys = [
-            k for k in available_keys
-            # Bỏ qua kiểm tra disabled_until nếu đã lọc bằng .is_("disabled_until", "null")
-            # Nếu muốn lọc cả <= NOW(), cần lấy tất cả key và lọc ở đây:
-            # if k.get('disabled_until') is None or datetime.fromisoformat(k['disabled_until'].replace('Z', '+00:00')) <= now_utc
-        ]
-
+        truly_available_keys = []
+        
+        for k in all_available_keys:
+            # Key khả dụng nếu disabled_until là NULL hoặc thời gian vô hiệu hóa đã qua
+            disabled_until = k.get('disabled_until')
+            if disabled_until is None:
+                truly_available_keys.append(k)
+            else:
+                try:
+                    # Parse chuỗi ISO datetime và kiểm tra xem thời gian vô hiệu hóa đã hết chưa
+                    # Chuẩn hóa định dạng ISO (đảm bảo timezone đúng)
+                    if disabled_until.endswith('Z'):
+                        disabled_until = disabled_until.replace('Z', '+00:00')
+                    elif '+' not in disabled_until and '-' not in disabled_until[10:]:
+                        disabled_until = f"{disabled_until}+00:00"
+                        
+                    disabled_time = datetime.fromisoformat(disabled_until)
+                    if disabled_time <= now_utc:
+                        # Thời gian vô hiệu hóa đã qua, key này khả dụng
+                        logger.info(f"Key {k['id']} was disabled until {disabled_time}, but that time has passed. Key is now available.")
+                        truly_available_keys.append(k)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Error parsing disabled_until value '{disabled_until}' for key {k['id']}: {e}")
+                    # Không thêm key này vào danh sách khả dụng nếu không phân tích được thời gian
+        
+        # Log chi tiết số lượng key thực sự khả dụng
+        logger.info(f"Found {len(truly_available_keys)} available keys out of {len(all_available_keys)} total keys after checking disabled_until status")
 
         if not truly_available_keys or (len(truly_available_keys) == 1 and str(truly_available_keys[0]['id']) == str(failed_key_id)):
              logger.warning(f"No available keys found for failover: user={user_id}, provider={provider_name}")
              # Gọi log_activity_db và truyền supabase
-             # Đã đúng: gọi log_activity_db và truyền supabase
              await log_activity_db(
                  user_id=user_id, provider_name=provider_name, key_id=failed_key_id, action="FAILOVER_EXHAUSTED",
                  supabase=supabase, description=f"No available keys to switch to after error {error_code} on key {failed_key_id}"
@@ -153,7 +168,6 @@ async def attempt_automatic_failover(
         if not found_next_key_data:
             logger.warning(f"Could not find a valid next key after checking all possibilities: user={user_id}, provider={provider_name}")
             # Gọi log_activity_db và truyền supabase
-            # Đã đúng: gọi log_activity_db và truyền supabase
             await log_activity_db(
                 user_id=user_id, provider_name=provider_name, key_id=failed_key_id, action="FAILOVER_EXHAUSTED",
                 supabase=supabase, description=f"No valid alternative key found after error {error_code} on key {failed_key_id}"
@@ -186,16 +200,13 @@ async def attempt_automatic_failover(
     try:
         # Bỏ chọn key cũ
         # Gỡ bỏ await vì update().execute() là đồng bộ
-        # Gỡ bỏ await (nếu có) vì update().execute() có thể là đồng bộ
         supabase.table("user_provider_keys").update({"is_selected": False}).eq("id", failed_key_id).execute()
         # Chọn key mới
-        # Gỡ bỏ await (nếu có) vì update().execute() có thể là đồng bộ
         supabase.table("user_provider_keys").update({"is_selected": True}).eq("id", next_key_id).execute()
         logger.info(f"Successfully switched selected key from {failed_key_id} to {next_key_id}")
     except Exception as e:
         logger.exception(f"Error updating is_selected flags during failover from {failed_key_id} to {next_key_id}: {e}")
         # Gọi log_activity_db và truyền supabase
-        # Đã đúng: gọi log_activity_db và truyền supabase
         await log_activity_db(
             user_id=user_id, provider_name=provider_name, key_id=next_key_id, action="ERROR",
             supabase=supabase, description=f"DB update failed during failover to this key. State might be inconsistent."
@@ -206,9 +217,7 @@ async def attempt_automatic_failover(
     # Lấy tên của key mới được chọn
     next_key_name = str(next_key_id) # Giá trị mặc định
     try:
-        # Xóa await ở đây
         next_key_res = supabase.table("user_provider_keys").select("name").eq("id", next_key_id).maybe_single().execute()
-        # Dòng log gỡ lỗi 2 đã bị xóa
         if hasattr(next_key_res, 'data') and next_key_res.data and next_key_res.data.get("name"):
             next_key_name = next_key_res.data["name"] or next_key_name # Sử dụng tên nếu có, nếu không giữ lại ID
     except Exception as e:
