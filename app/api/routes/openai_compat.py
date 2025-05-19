@@ -165,8 +165,10 @@ async def list_models(
         ModelInfo(id="gemini-2.0-flash-lite", created=1709000001, owned_by="google", context_window=GEMINI_2_0_FLASH_CONTEXT), # Giả định giống 2.0 flash
         ModelInfo(id="gemini-2.0-flash-live-001", created=1716000000, owned_by="google", context_window=GEMINI_2_0_FLASH_CONTEXT), # Giả định giống 2.0 flash
         ModelInfo(id="gemini-2.5-pro-preview-03-25", created=1711000000, owned_by="google", context_window=GEMINI_2_5_PRO_PREVIEW_CONTEXT),
+        ModelInfo(id="gemini-2.5-pro-preview-05-06", created=1714000000, owned_by="google", context_window=GEMINI_2_5_PRO_PREVIEW_CONTEXT),
         ModelInfo(id="gemini-2.5-pro-exp-03-25", created=1711000100, owned_by="google", context_window=GEMINI_2_5_PRO_EXP_CONTEXT), # Model của bạn
         ModelInfo(id="gemini-2.5-flash-preview-04-17", created=1713000000, owned_by="google", context_window=GEMINI_2_5_FLASH_PREVIEW_CONTEXT),
+        ModelInfo(id="gemini-2.5-flash-preview-04-17-thinking", created=1713000001, owned_by="google", context_window=GEMINI_2_5_FLASH_PREVIEW_CONTEXT),
         ModelInfo(id="imagen-3.0-generate-002", created=1714000000, owned_by="google"), # Image model
 
         # Grok Models
