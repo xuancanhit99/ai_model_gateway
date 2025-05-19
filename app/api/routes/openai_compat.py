@@ -143,70 +143,17 @@ async def list_models(
     # Lấy settings để truy cập model names nếu cần (hoặc hardcode như hiện tại)
     # settings = get_settings() # Uncomment if using settings for model IDs
 
-    # Định nghĩa context window dựa trên bảng người dùng cung cấp
-    # Sử dụng giá trị chính xác hoặc giá trị được giả định/ước tính từ bảng
-    GEMINI_1_5_PRO_CONTEXT = 1048576
-    GEMINI_2_0_FLASH_CONTEXT = 1000000 # Bảng ghi 1M
-    GEMINI_2_5_PRO_PREVIEW_CONTEXT = 1048576
-    GEMINI_2_5_PRO_EXP_CONTEXT = 1048576 # Giả định theo bảng
-    GEMINI_2_5_FLASH_PREVIEW_CONTEXT = 1000000 # Giả định theo bảng (>= 1M)
-    GROK_2_CONTEXT = 131072
-    GROK_VISION_CONTEXT = 8192 # Theo bảng cho grok-2-vision và grok-vision-beta
-    GIGACHAT_V1_CONTEXT = 32768
-    GIGACHAT_V2_CONTEXT = 128000
-    SONAR_DEFAULT_CONTEXT = 128000
-    SONAR_PRO_CONTEXT = 200000
-    R1_CONTEXT = 128000
+    model_file_path = "app/core/models.json"
+    try:
+        with open(model_file_path, "r", encoding="utf-8") as f:
+            raw_model_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logging.error(f"Error loading models from {model_file_path}: {e}")
+        # Trả về danh sách rỗng hoặc danh sách mặc định nếu không đọc được file
+        raw_model_data = []
 
-    raw_models = [
-        # Gemini Models
-        ModelInfo(id="gemini-1.5-pro", created=1707000000, owned_by="google", context_window=GEMINI_1_5_PRO_CONTEXT),
-        ModelInfo(id="gemini-2.0-flash", created=1709000000, owned_by="google", context_window=GEMINI_2_0_FLASH_CONTEXT),
-        ModelInfo(id="gemini-2.0-flash-lite", created=1709000001, owned_by="google", context_window=GEMINI_2_0_FLASH_CONTEXT), # Giả định giống 2.0 flash
-        ModelInfo(id="gemini-2.0-flash-live-001", created=1716000000, owned_by="google", context_window=GEMINI_2_0_FLASH_CONTEXT), # Giả định giống 2.0 flash
-        ModelInfo(id="gemini-2.5-pro-preview-03-25", created=1711000000, owned_by="google", context_window=GEMINI_2_5_PRO_PREVIEW_CONTEXT),
-        ModelInfo(id="gemini-2.5-pro-preview-05-06", created=1714000000, owned_by="google", context_window=GEMINI_2_5_PRO_PREVIEW_CONTEXT),
-        ModelInfo(id="gemini-2.5-pro-exp-03-25", created=1711000100, owned_by="google", context_window=GEMINI_2_5_PRO_EXP_CONTEXT), # Model của bạn
-        ModelInfo(id="gemini-2.5-flash-preview-04-17", created=1713000000, owned_by="google", context_window=GEMINI_2_5_FLASH_PREVIEW_CONTEXT),
-        ModelInfo(id="gemini-2.5-flash-preview-04-17-thinking", created=1713000001, owned_by="google", context_window=GEMINI_2_5_FLASH_PREVIEW_CONTEXT),
-        ModelInfo(id="imagen-3.0-generate-002", created=1714000000, owned_by="google"), # Image model
-
-        # Grok Models
-        ModelInfo(id="grok-beta", created=1710000006, owned_by="xai", context_window=GROK_2_CONTEXT), # Giả định theo grok-2
-        ModelInfo(id="grok-vision-beta", created=1710000007, owned_by="xai", context_window=GROK_VISION_CONTEXT),
-        ModelInfo(id="grok-2-1212", created=1710000000, owned_by="xai", context_window=GROK_2_CONTEXT),
-        ModelInfo(id="grok-2-vision-1212", created=1710000001, owned_by="xai", context_window=GROK_VISION_CONTEXT),
-        ModelInfo(id="grok-3-beta", created=1710000002, owned_by="xai", context_window=GROK_2_CONTEXT), # Giả định theo grok-2
-        ModelInfo(id="grok-3-fast-beta", created=1710000003, owned_by="xai", context_window=GROK_2_CONTEXT), # Giả định theo grok-2
-        ModelInfo(id="grok-3-mini-beta", created=1710000004, owned_by="xai", context_window=GROK_2_CONTEXT), # Giả định theo grok-2
-        ModelInfo(id="grok-3-mini-fast-beta", created=1710000005, owned_by="xai", context_window=GROK_2_CONTEXT), # Giả định theo grok-2
-
-        # GigaChat Models (v1)
-        ModelInfo(id="GigaChat", created=1700000000, owned_by="salutedevices", context_window=GIGACHAT_V1_CONTEXT),
-        ModelInfo(id="GigaChat-Pro", created=1700000011, owned_by="salutedevices", context_window=GIGACHAT_V1_CONTEXT),
-        ModelInfo(id="GigaChat-Max", created=1700000007, owned_by="salutedevices", context_window=GIGACHAT_V1_CONTEXT),
-        ModelInfo(id="GigaChat-Plus", created=1700000009, owned_by="salutedevices"), # Không có context trong bảng
-        ModelInfo(id="GigaChat-preview", created=1700000013, owned_by="salutedevices", context_window=GIGACHAT_V1_CONTEXT), # Giả định
-        ModelInfo(id="GigaChat-Pro-preview", created=1700000012, owned_by="salutedevices", context_window=GIGACHAT_V1_CONTEXT), # Giả định
-        ModelInfo(id="GigaChat-Max-preview", created=1700000008, owned_by="salutedevices", context_window=GIGACHAT_V1_CONTEXT), # Giả định
-        ModelInfo(id="GigaChat-Plus-preview", created=1700000010, owned_by="salutedevices"), # Không có context trong bảng
-
-        # GigaChat Models (v2)
-        ModelInfo(id="GigaChat-2", created=1700000001, owned_by="salutedevices", context_window=GIGACHAT_V2_CONTEXT),
-        ModelInfo(id="GigaChat-2-Pro", created=1700000004, owned_by="salutedevices", context_window=GIGACHAT_V2_CONTEXT),
-        ModelInfo(id="GigaChat-2-Max", created=1700000002, owned_by="salutedevices", context_window=GIGACHAT_V2_CONTEXT),
-        ModelInfo(id="GigaChat-2-preview", created=1700000006, owned_by="salutedevices", context_window=GIGACHAT_V2_CONTEXT), # Giả định
-        ModelInfo(id="GigaChat-2-Pro-preview", created=1700000005, owned_by="salutedevices", context_window=GIGACHAT_V2_CONTEXT), # Giả định
-        ModelInfo(id="GigaChat-2-Max-preview", created=1700000003, owned_by="salutedevices", context_window=GIGACHAT_V2_CONTEXT), # Giả định
-
-        # Perplexity Sonar Models
-        ModelInfo(id="sonar", created=1717000000, owned_by="perplexity", context_window=SONAR_DEFAULT_CONTEXT),
-        ModelInfo(id="sonar-pro", created=1717000001, owned_by="perplexity", context_window=SONAR_PRO_CONTEXT),
-        ModelInfo(id="sonar-reasoning", created=1717000002, owned_by="perplexity", context_window=SONAR_DEFAULT_CONTEXT),
-        ModelInfo(id="sonar-reasoning-pro", created=1717000003, owned_by="perplexity", context_window=SONAR_DEFAULT_CONTEXT),
-        ModelInfo(id="sonar-deep-research", created=1717000004, owned_by="perplexity", context_window=SONAR_DEFAULT_CONTEXT),
-        ModelInfo(id="r1-1776", created=1717000005, owned_by="perplexity", context_window=R1_CONTEXT),
-    ]
+    # Create ModelInfo objects from the loaded data
+    raw_models: List[ModelInfo] = [ModelInfo(**model_data) for model_data in raw_model_data]
 
     # Add provider prefix and context window to the model ID for display purposes
     display_models = []

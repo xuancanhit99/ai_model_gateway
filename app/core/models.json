@@ -1,0 +1,227 @@
+[
+  {
+    "id": "gemini-1.5-pro",
+    "created": 1707000000,
+    "owned_by": "google",
+    "context_window": 1048576
+  },
+  {
+    "id": "gemini-2.0-flash",
+    "created": 1709000000,
+    "owned_by": "google",
+    "context_window": 1000000
+  },
+  {
+    "id": "gemini-2.0-flash-lite",
+    "created": 1709000001,
+    "owned_by": "google",
+    "context_window": 1000000
+  },
+  {
+    "id": "gemini-2.0-flash-live-001",
+    "created": 1716000000,
+    "owned_by": "google",
+    "context_window": 1000000
+  },
+  {
+    "id": "gemini-2.5-pro-preview-03-25",
+    "created": 1711000000,
+    "owned_by": "google",
+    "context_window": 1048576
+  },
+  {
+    "id": "gemini-2.5-pro-preview-05-06",
+    "created": 1714000000,
+    "owned_by": "google",
+    "context_window": 1048576
+  },
+  {
+    "id": "gemini-2.5-pro-exp-03-25",
+    "created": 1711000100,
+    "owned_by": "google",
+    "context_window": 1048576
+  },
+  {
+    "id": "gemini-2.5-flash-preview-04-17",
+    "created": 1713000000,
+    "owned_by": "google",
+    "context_window": 1000000
+  },
+  {
+    "id": "gemini-2.5-flash-preview-04-17-thinking",
+    "created": 1713000001,
+    "owned_by": "google",
+    "context_window": 1000000
+  },
+  {
+    "id": "imagen-3.0-generate-002",
+    "created": 1714000000,
+    "owned_by": "google"
+  },
+  {
+    "id": "grok-beta",
+    "created": 1710000006,
+    "owned_by": "xai",
+    "context_window": 131072
+  },
+  {
+    "id": "grok-vision-beta",
+    "created": 1710000007,
+    "owned_by": "xai",
+    "context_window": 8192
+  },
+  {
+    "id": "grok-2-1212",
+    "created": 1710000000,
+    "owned_by": "xai",
+    "context_window": 131072
+  },
+  {
+    "id": "grok-2-vision-1212",
+    "created": 1710000001,
+    "owned_by": "xai",
+    "context_window": 8192
+  },
+  {
+    "id": "grok-3-beta",
+    "created": 1710000002,
+    "owned_by": "xai",
+    "context_window": 131072
+  },
+  {
+    "id": "grok-3-fast-beta",
+    "created": 1710000003,
+    "owned_by": "xai",
+    "context_window": 131072
+  },
+  {
+    "id": "grok-3-mini-beta",
+    "created": 1710000004,
+    "owned_by": "xai",
+    "context_window": 131072
+  },
+  {
+    "id": "grok-3-mini-fast-beta",
+    "created": 1710000005,
+    "owned_by": "xai",
+    "context_window": 131072
+  },
+  {
+    "id": "GigaChat",
+    "created": 1700000000,
+    "owned_by": "salutedevices",
+    "context_window": 32768
+  },
+  {
+    "id": "GigaChat-Pro",
+    "created": 1700000011,
+    "owned_by": "salutedevices",
+    "context_window": 32768
+  },
+  {
+    "id": "GigaChat-Max",
+    "created": 1700000007,
+    "owned_by": "salutedevices",
+    "context_window": 32768
+  },
+  {
+    "id": "GigaChat-Plus",
+    "created": 1700000009,
+    "owned_by": "salutedevices"
+  },
+  {
+    "id": "GigaChat-preview",
+    "created": 1700000013,
+    "owned_by": "salutedevices",
+    "context_window": 32768
+  },
+  {
+    "id": "GigaChat-Pro-preview",
+    "created": 1700000012,
+    "owned_by": "salutedevices",
+    "context_window": 32768
+  },
+  {
+    "id": "GigaChat-Max-preview",
+    "created": 1700000008,
+    "owned_by": "salutedevices",
+    "context_window": 32768
+  },
+  {
+    "id": "GigaChat-Plus-preview",
+    "created": 1700000010,
+    "owned_by": "salutedevices"
+  },
+  {
+    "id": "GigaChat-2",
+    "created": 1700000001,
+    "owned_by": "salutedevices",
+    "context_window": 128000
+  },
+  {
+    "id": "GigaChat-2-Pro",
+    "created": 1700000004,
+    "owned_by": "salutedevices",
+    "context_window": 128000
+  },
+  {
+    "id": "GigaChat-2-Max",
+    "created": 1700000002,
+    "owned_by": "salutedevices",
+    "context_window": 128000
+  },
+  {
+    "id": "GigaChat-2-preview",
+    "created": 1700000006,
+    "owned_by": "salutedevices",
+    "context_window": 128000
+  },
+  {
+    "id": "GigaChat-2-Pro-preview",
+    "created": 1700000005,
+    "owned_by": "salutedevices",
+    "context_window": 128000
+  },
+  {
+    "id": "GigaChat-2-Max-preview",
+    "created": 1700000003,
+    "owned_by": "salutedevices",
+    "context_window": 128000
+  },
+  {
+    "id": "sonar",
+    "created": 1717000000,
+    "owned_by": "perplexity",
+    "context_window": 128000
+  },
+  {
+    "id": "sonar-pro",
+    "created": 1717000001,
+    "owned_by": "perplexity",
+    "context_window": 200000
+  },
+  {
+    "id": "sonar-reasoning",
+    "created": 1717000002,
+    "owned_by": "perplexity",
+    "context_window": 128000
+  },
+  {
+    "id": "sonar-reasoning-pro",
+    "created": 1717000003,
+    "owned_by": "perplexity",
+    "context_window": 128000
+  },
+  {
+    "id": "sonar-deep-research",
+    "created": 1717000004,
+    "owned_by": "perplexity",
+    "context_window": 128000
+  },
+  {
+    "id": "r1-1776",
+    "created": 1717000005,
+    "owned_by": "perplexity",
+    "context_window": 128000
+  }
+]
