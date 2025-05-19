@@ -139,10 +139,8 @@ async def create_chat_completion(
 async def list_models(
     auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys)  # Sử dụng phiên bản nâng cao
 ):
-    """Liệt kê các mô hình được hỗ trợ (Gemini, Grok, GigaChat, Perplexity Sonar) với tiền tố provider."""
-    # Lấy settings để truy cập model names nếu cần (hoặc hardcode như hiện tại)
-    # settings = get_settings() # Uncomment if using settings for model IDs
 
+    # Load model data from JSON file
     model_file_path = "app/core/models.json"
     try:
         with open(model_file_path, "r", encoding="utf-8") as f:
