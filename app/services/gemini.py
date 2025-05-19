@@ -1,4 +1,5 @@
 # app/services/gemini.py
+import logging
 import google.generativeai as genai
 import google.api_core.exceptions # Import Google API core exceptions
 from google.generativeai.types import generation_types # Import specific types for error handling
