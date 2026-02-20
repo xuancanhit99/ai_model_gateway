@@ -15,7 +15,7 @@ from app.core.log_utils import log_activity_db # Đã đúng
 logger = logging.getLogger(__name__)
 
 # Hằng số thời gian vô hiệu hóa (5 phút)
-DISABLE_DURATION_MINUTES = 5
+DISABLE_DURATION_MINUTES = 1
 
 async def attempt_automatic_failover(
     user_id: str,
