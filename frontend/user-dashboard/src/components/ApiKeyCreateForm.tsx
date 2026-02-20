@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { getAccessToken } from '../authHelper';
 import toast from 'react-hot-toast'; // Import toast
 import {
     TextField, Button, Box, Typography, CircularProgress, Alert, IconButton, InputAdornment, Tooltip // Removed Snackbar
@@ -17,25 +17,15 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
     // const [error, setError] = useState<string | null>(null); // Remove error state
     const [newKey, setNewKey] = useState<string | null>(null);
     // const [snackbarOpen, setSnackbarOpen] = useState(false); // Remove Snackbar state
- 
+
     const handleCreateKey = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault(); // Ngăn chặn gửi form mặc định
         setLoading(true);
         // setError(null); // Remove error state reset
-        setNewKey(null); // Xóa key cũ nếu có
- 
-        if (!supabase) {
-            toast.error("Supabase client is not initialized.");
-            setLoading(false);
-            return;
-        }
+        setNewKey(null);
 
         try {
-            const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-            if (sessionError || !sessionData.session) {
-                throw new Error(sessionError?.message || 'Could not get user session.');
-            }
-            const token = sessionData.session.access_token;
+            const token = await getAccessToken();
 
             // Use a relative path
             const apiUrl = '/api/v1/keys';
@@ -60,7 +50,7 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
             setName(''); // Xóa trường input name
             toast.success('API Key created successfully!'); // Add success toast
             onKeyCreated(); // Thông báo cho component cha
- 
+
         } catch (err: any) {
             console.error("Error creating API key:", err);
             // Ensure error message is always a string before showing toast
@@ -85,7 +75,7 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
                 });
         }
     };
- 
+
     // Remove handleSnackbarClose as Snackbar is removed
     // const handleSnackbarClose = (_event?: React.SyntheticEvent | Event, reason?: string) => {
     //     if (reason === 'clickaway') {
@@ -93,7 +83,7 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
     //     }
     //     setSnackbarOpen(false);
     // };
- 
+
     return (
         <Box component="div" sx={{ mt: 3 }}> {/* Use Box as container */}
             <Typography variant="h6" component="h4" gutterBottom>
@@ -122,10 +112,10 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
                     {loading ? 'Creating...' : 'Create Key'}
                 </Button>
             </Box>
- 
+
             {/* Error messages are now handled by react-hot-toast */}
             {/* {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>} */}
- 
+
             {newKey && (
                 <Alert severity="success" sx={{ mt: 3, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                     <Typography variant="subtitle1" gutterBottom>
@@ -157,22 +147,22 @@ const ApiKeyCreateForm: React.FC<ApiKeyCreateFormProps> = ({ onKeyCreated }) => 
                                             onClick={copyToClipboard}
                                             edge="end"
                                         >
-                                            <ContentCopyIcon fontSize='small'/>
+                                            <ContentCopyIcon fontSize='small' />
                                         </IconButton>
                                     </Tooltip>
                                 </InputAdornment>
                             ),
                         }}
                     />
-                     {/* Optional: Add a button to explicitly close/hide the key */}
-                     <Button size="small" onClick={() => setNewKey(null)} sx={{ alignSelf: 'flex-end' }}>
-                         Close
-                     </Button>
+                    {/* Optional: Add a button to explicitly close/hide the key */}
+                    <Button size="small" onClick={() => setNewKey(null)} sx={{ alignSelf: 'flex-end' }}>
+                        Close
+                    </Button>
                 </Alert>
-           )}
+            )}
             {/* Snackbar removed, confirmation handled by react-hot-toast */}
-       </Box>
-   );
+        </Box>
+    );
 };
 
 export default ApiKeyCreateForm;

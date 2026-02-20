@@ -7,9 +7,12 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2Pas
 from typing import Dict, Any, Tuple, Optional
 import logging
 from datetime import datetime, timedelta, timezone
-from jose import JWTError, jwt
+import jwt as pyjwt  # PyJWT for RS256 JWKS verification
+from jwt import PyJWKClient, PyJWKClientError
 from pydantic import BaseModel, Field
-from cryptography.fernet import Fernet  # Thêm import Fernet
+from cryptography.fernet import Fernet
+from cachetools import TTLCache
+import threading
 
 from .config import get_settings
 
@@ -17,17 +20,36 @@ from .supabase_client import get_supabase_client
 from supabase import Client
 
 logger = logging.getLogger(__name__)
-# Configure logging level if needed (e.g., in main.py or via environment variable)
-# logging.basicConfig(level=logging.DEBUG) # Example: Set level to DEBUG
 
 # --- Constants ---
-ALGORITHM = "HS256" # Algorithm used by Supabase for JWT
+ALGORITHM = "RS256"  # Keycloak uses RS256 for JWT signing
+
+# --- JWKS Client Cache ---
+# Cache the PyJWKClient instance per issuer URL (reusable, thread-safe)
+_jwks_clients: Dict[str, PyJWKClient] = {}
+_jwks_lock = threading.Lock()
+
+
+def _get_jwks_client(issuer_url: str) -> PyJWKClient:
+    """Get or create a cached PyJWKClient for the given issuer URL."""
+    if issuer_url not in _jwks_clients:
+        with _jwks_lock:
+            if issuer_url not in _jwks_clients:
+                jwks_url = f"{issuer_url}/protocol/openid-connect/certs"
+                _jwks_clients[issuer_url] = PyJWKClient(
+                    jwks_url,
+                    cache_keys=True,
+                    lifespan=3600,  # Cache keys for 1 hour
+                )
+                logger.info(f"Created JWKS client for: {jwks_url}")
+    return _jwks_clients[issuer_url]
+
 
 # --- Security Schemes ---
 # For API Key authentication (hp_...)
 api_key_scheme = HTTPBearer(description="API Key authentication using 'hp_' prefixed keys.")
-# For User JWT authentication (from Supabase Auth)
-jwt_scheme = HTTPBearer(description="User authentication using JWT obtained from Supabase Auth.")
+# For User JWT authentication (from IDSafe/Keycloak)
+jwt_scheme = HTTPBearer(description="User authentication using JWT obtained from IDSafe (Keycloak OIDC).")
 
 
 # --- Pydantic Models ---
@@ -196,82 +218,98 @@ async def verify_api_key(
 #         logger.error(f"Failed to update last_used_at for key prefix {key_prefix}: {e}")
 
 
-# --- JWT Authentication Dependency ---
+# --- JWT Authentication Dependency (IDSafe / Keycloak OIDC) ---
 
 async def get_current_user(
     token: HTTPAuthorizationCredentials = Depends(jwt_scheme),
-    settings: Any = Depends(get_settings) # Inject settings
+    settings: Any = Depends(get_settings)
 ) -> str:
     """
-    Giải mã và xác thực JWT từ header Authorization để lấy user ID.
+    Verify JWT from IDSafe (Keycloak) using JWKS public key verification (RS256).
 
-    Args:
-        token (HTTPAuthorizationCredentials): Token Bearer từ header.
-        settings (Settings): Đối tượng cài đặt ứng dụng.
-
-    Raises:
-        HTTPException: 401 nếu token không hợp lệ, hết hạn, hoặc thiếu secret.
-                       403 nếu token hợp lệ nhưng không có user ID (sub).
+    The function fetches signing keys from the Keycloak JWKS endpoint,
+    verifies the token signature, and extracts the user ID from the 'sub' claim.
 
     Returns:
-        str: User ID (UUID) từ payload của token.
+        str: User ID (UUID) from the token's 'sub' claim.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Không thể xác thực thông tin đăng nhập",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    jwt_secret = settings.SUPABASE_JWT_SECRET
-    if not jwt_secret:
-        logger.error("SUPABASE_JWT_SECRET is not configured. Cannot verify JWT.")
+
+    issuer_url = settings.IDSAFE_ISSUER_URL
+    client_id = settings.IDSAFE_CLIENT_ID
+
+    if not issuer_url:
+        logger.error("IDSAFE_ISSUER_URL is not configured. Cannot verify JWT.")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, # Use 500 for server config error
-            detail="Lỗi cấu hình xác thực phía máy chủ."
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Lỗi cấu hình xác thực phía máy chủ (missing IDSAFE_ISSUER_URL)."
         )
 
     if token.scheme != "Bearer":
-         logger.warning(f"Invalid token scheme received: {token.scheme}")
-         raise HTTPException(
+        logger.warning(f"Invalid token scheme received: {token.scheme}")
+        raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Yêu cầu JWT Bearer token."
         )
 
-    logger.debug(f"Attempting to decode JWT: {token.credentials[:10]}...") # Log first 10 chars
+    logger.debug(f"Attempting to decode JWT via JWKS: {token.credentials[:10]}...")
 
     try:
-        payload = jwt.decode(
+        # Get JWKS client (cached)
+        jwks_client = _get_jwks_client(issuer_url)
+
+        # Get the signing key from the JWT header's 'kid'
+        signing_key = jwks_client.get_signing_key_from_jwt(token.credentials)
+
+        # Decode and verify the token
+        decode_options = {
+            "verify_exp": True,
+            "verify_aud": bool(client_id),  # Only verify audience if client_id is set
+        }
+
+        payload = pyjwt.decode(
             token.credentials,
-            jwt_secret,
+            signing_key.key,
             algorithms=[ALGORITHM],
-            audience='authenticated' # Specify the expected audience for Supabase JWTs
+            audience=client_id if client_id else None,
+            issuer=issuer_url,
+            options=decode_options,
         )
-        logger.debug(f"JWT payload decoded successfully: {payload}") # Log payload đã giải mã
+        logger.debug(f"JWT payload decoded successfully: sub={payload.get('sub')}")
 
         user_id: Optional[str] = payload.get("sub")
-        expiration: Optional[int] = payload.get("exp")
 
         if user_id is None:
-            logger.error("JWT payload missing 'sub' (user ID). Payload: %s", payload)
-            raise credentials_exception # Or a more specific 403 Forbidden
+            logger.error("JWT payload missing 'sub' (user ID). Payload keys: %s", list(payload.keys()))
+            raise credentials_exception
 
-        # Check expiration (jose might do this, but double-checking is safe)
-        if expiration is None:
-             logger.error("JWT payload missing 'exp' (expiration time). Payload: %s", payload)
-             raise credentials_exception
-        elif datetime.now(timezone.utc) > datetime.fromtimestamp(expiration, timezone.utc):
-            logger.warning(f"JWT token has expired for user {user_id}. Expiry: {datetime.fromtimestamp(expiration, timezone.utc)}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token đã hết hạn",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Token is valid, return the user ID
         logger.info(f"JWT validated successfully for user_id: {user_id}")
         return user_id
 
-    except JWTError as e:
-        # Log lỗi cụ thể từ thư viện jose
+    except pyjwt.ExpiredSignatureError:
+        logger.warning("JWT token has expired.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token đã hết hạn",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except pyjwt.InvalidAudienceError:
+        logger.warning("JWT audience mismatch.")
+        raise credentials_exception
+    except pyjwt.InvalidIssuerError:
+        logger.warning("JWT issuer mismatch.")
+        raise credentials_exception
+    except PyJWKClientError as e:
+        logger.error(f"JWKS client error (could not fetch keys): {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể xác minh token — lỗi kết nối tới IDSafe."
+        )
+    except pyjwt.PyJWTError as e:
         logger.error(f"JWT validation error: {e}", exc_info=True)
         raise credentials_exception
     except Exception as e:

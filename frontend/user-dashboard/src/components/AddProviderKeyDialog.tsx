@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { supabase } from '../supabaseClient';
+import { getAccessToken } from '../authHelper';
 import toast from 'react-hot-toast';
 import {
   Dialog,
@@ -50,17 +50,8 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
 
   // Hàm ghi nhật ký khi thêm mới Provider Key
   const addProviderKeyLog = async (action: 'ADD', providerNameLog: string, keyIdLog: string | null, descriptionLog: string) => {
-    // Sử dụng lại logic gọi API log từ ProviderKeyList.tsx
     try {
-      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
-
-      // Lấy token xác thực
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) {
-        console.error('Authentication token not available for logging.');
-        return; // Không chặn, chỉ log lỗi
-      }
+      const token = await getAccessToken();
 
       const logPayload = {
         action,
@@ -95,44 +86,33 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!apiKey) {
       toast.error(t('providerCreateForm.apiKeyRequired', 'API Key is required'));
       return;
     }
-    
+
     setLoading(true);
-    
+
     try {
-      // Check if supabase is initialized
-      if (!supabase) {
-        throw new Error('Supabase client not initialized');
-      }
-      
-      // Lấy token access của session hiện tại
-      const sessionResult = await supabase.auth.getSession();
-      const accessToken = sessionResult.data.session?.access_token;
-      
-      if (!accessToken) {
-        throw new Error(t('providerCreateForm.notAuthenticated', 'Not authenticated. Please sign in again.'));
-      }
+      const accessToken = await getAccessToken();
       // Thử gửi yêu cầu qua XMLHttpRequest để xử lý sâu hơn các vấn đề mixed content
       // Sử dụng kiểu ProviderKeyApiResponse cho Promise
       await new Promise<ProviderKeyApiResponse>(async (resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        
-        
+
+
         // Đảm bảo URL là HTTPS bằng cách sử dụng origin hiện tại và thêm dấu / ở cuối
         const apiUrl = `${window.location.origin}/api/v1/provider-keys/`;
-        
+
         // Sử dụng withCredentials để đảm bảo cookies và auth headers được gửi
         xhr.open('POST', apiUrl, true);
         xhr.withCredentials = true; // Đảm bảo cookies được gửi trong CORS requests
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
-        
+
         // Chuyển thành async function để có thể await
-        xhr.onload = async function() {
+        xhr.onload = async function () {
           if (xhr.status >= 200 && xhr.status < 300) {
             console.log('XHR Success:', xhr.status, xhr.statusText);
             // Parse response và ép kiểu an toàn
@@ -141,20 +121,20 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
               const parsed = JSON.parse(xhr.responseText);
               // Kiểm tra xem parsed có phải object không trước khi gán
               if (typeof parsed === 'object' && parsed !== null) {
-                 responseData = parsed as ProviderKeyApiResponse;
+                responseData = parsed as ProviderKeyApiResponse;
               } else {
-                 console.error('Parsed response is not an object:', parsed);
+                console.error('Parsed response is not an object:', parsed);
               }
             } catch (e) {
               console.error('Error parsing response:', e);
               // responseData vẫn là {} nếu parse lỗi
             }
-            
-            
+
+
             // Reset form và thông báo thành công
             setApiKey('');
             setName('');
-            toast.success(t('providerCreateForm.keyAddedSuccess', 'API key added successfully')); 
+            toast.success(t('providerCreateForm.keyAddedSuccess', 'API key added successfully'));
             // Ghi nhật ký khi thêm key thành công qua API và chờ hoàn tất
             const keyIdForLog = responseData?.id || null;
             const providerNameForLog = responseData?.provider_name || providerName; // Fallback nếu response không có
@@ -163,24 +143,24 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
               // Await lời gọi ghi log
               await addProviderKeyLog('ADD', providerNameForLog, keyIdForLog, descriptionForLog);
             } catch (logError) {
-               console.error("Logging failed, but proceeding:", logError);
-               // Có thể bỏ qua lỗi log hoặc hiển thị thông báo phụ
+              console.error("Logging failed, but proceeding:", logError);
+              // Có thể bỏ qua lỗi log hoặc hiển thị thông báo phụ
             }
-            
+
             // Call onSuccess CHỈ SAU KHI ghi log đã được thử (await)
             if (onSuccess) {
               onSuccess(); // Sẽ trigger fetchProviderKeys và fetchProviderKeyLogs trong parent
             }
-            
-            
+
+
             // Đóng dialog
             handleClose();
-            
+
             resolve(responseData);
           } else {
             console.error('XHR Error:', xhr.status, xhr.statusText, xhr.responseText);
             let errorMessage = `Failed with status: ${xhr.status}`;
-            
+
             try {
               const errorData = JSON.parse(xhr.responseText);
               errorMessage = errorData.detail || errorData.message || errorMessage;
@@ -193,32 +173,32 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
             reject(new Error(errorMessage));
           }
         };
-        
-        xhr.onerror = function() {
+
+        xhr.onerror = function () {
           console.error('XHR Network Error');
           // Use translation for error toast
           const networkErrorMsg = t('providerCreateForm.networkError', 'Network error occurred. Please check your connection.');
           toast.error(networkErrorMsg);
           reject(new Error(networkErrorMsg));
         };
-        
-        xhr.onabort = function() {
+
+        xhr.onabort = function () {
           console.error('XHR Aborted');
           // Use translation for error toast
           const abortErrorMsg = t('providerCreateForm.requestAborted', 'Request was aborted.');
           toast.error(abortErrorMsg);
           reject(new Error(abortErrorMsg));
         };
-        
+
         const data = JSON.stringify({
           provider_name: providerName,
           api_key: apiKey,
           name: name || null
         });
-        
+
         xhr.send(data);
       });
-      
+
     } catch (error: any) {
       console.error('Error creating provider key:', error);
       // Use translation for error toast, include original error if possible
@@ -254,7 +234,7 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
             autoFocus
             helperText={t('providerCreateForm.apiKeyHelper', 'Your API key will be encrypted before storage')}
           />
-          
+
           <TextField
             fullWidth
             label={t('providerCreateForm.descriptionLabel', 'Description (Optional)')}
@@ -268,10 +248,10 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
           <Button onClick={handleClose} disabled={loading}>
             {t('action.cancel', 'Cancel')}
           </Button>
-          <Button 
+          <Button
             type="submit"
-            variant="contained" 
-            color="primary" 
+            variant="contained"
+            color="primary"
             disabled={loading}
           >
             {loading ? (

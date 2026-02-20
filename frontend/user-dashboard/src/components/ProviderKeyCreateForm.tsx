@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
+import { getAccessToken } from '../authHelper';
 import toast from 'react-hot-toast';
 import {
   Box,
@@ -35,7 +36,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
   const [apiKey, setApiKey] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
-  
+
   // Hàm ghi nhật ký khi thêm mới Provider Key
   const addProviderKeyLog = async (responseData: any) => {
     try {
@@ -43,7 +44,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
         console.error('Cannot log provider key action: Missing data', responseData);
         return;
       }
-      
+
       // Ghi nhật ký vào bảng provider_key_logs
       const { error } = await supabase
         .from('provider_key_logs')
@@ -53,7 +54,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
           key_id: responseData.id,
           description: `Added new ${name ? `"${name}" ` : ''}key for ${providerDisplayNames[responseData.provider_name] || responseData.provider_name}`
         });
-        
+
       if (error) {
         console.error('Error adding provider key log:', error);
       }
@@ -61,55 +62,43 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       console.error('Error in addProviderKeyLog:', error);
     }
   };
-  
+
   const handleProviderChange = (event: SelectChangeEvent<string>) => {
     setProvider(event.target.value);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!provider || !apiKey) {
       // Use translation for error toast
       toast.error(t('providerCreateForm.providerAndApiKeyRequired', 'Provider and API Key are required'));
       return;
     }
-    
+
     setLoading(true);
-    
+
     try {
-      // Check if supabase is initialized
-      if (!supabase) {
-        throw new Error('Supabase client not initialized');
-      }
-      
-      // Lấy token access của session hiện tại
-      const sessionResult = await supabase.auth.getSession();
-      const accessToken = sessionResult.data.session?.access_token;
-      
-      if (!accessToken) {
-        // Use translation for error message
-        throw new Error(t('providerCreateForm.notAuthenticated', 'Not authenticated. Please sign in again.'));
-      }
-      
+      const accessToken = await getAccessToken();
+
       // Thử gửi yêu cầu qua XMLHttpRequest để xử lý sâu hơn các vấn đề mixed content
-      await new Promise<{id?: string, provider_name?: string}>(async (resolve, reject) => {
+      await new Promise<{ id?: string, provider_name?: string }>(async (resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        
+
         // Đảm bảo URL là HTTPS bằng cách sử dụng origin hiện tại và thêm dấu / ở cuối
         const apiUrl = `${window.location.origin}/api/v1/provider-keys/`; // Thêm dấu / ở cuối
         console.log('Submitting to URL via XHR:', apiUrl);
-        
+
         // Sử dụng withCredentials để đảm bảo cookies và auth headers được gửi
         xhr.open('POST', apiUrl, true);
         xhr.withCredentials = true; // Đảm bảo cookies được gửi trong CORS requests
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
-        
-        xhr.onload = function() {
+
+        xhr.onload = function () {
           if (xhr.status >= 200 && xhr.status < 300) {
             console.log('XHR Success:', xhr.status, xhr.statusText);
-            
+
             // Parse response to get key ID for logging
             let responseData = {};
             try {
@@ -117,26 +106,26 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
             } catch (e) {
               console.error('Error parsing response:', e);
             }
-            
+
             // Reset form và thông báo thành công
             setProvider('');
             setApiKey('');
             setName('');
             toast.success(t('providerCreateForm.keyAddedSuccess')); // Show success toast
-            
+
             // Ghi nhật ký khi thêm key thành công
             addProviderKeyLog(responseData);
-            
+
             // Call onSuccess if provided
             if (onSuccess) {
               onSuccess();
             }
-            
+
             resolve(responseData);
           } else {
             console.error('XHR Error:', xhr.status, xhr.statusText, xhr.responseText);
             let errorMessage = `Failed with status: ${xhr.status}`;
-            
+
             try {
               const errorData = JSON.parse(xhr.responseText);
               errorMessage = errorData.detail || errorData.message || errorMessage;
@@ -149,32 +138,32 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
             reject(new Error(errorMessage));
           }
         };
-        
-        xhr.onerror = function() {
+
+        xhr.onerror = function () {
           console.error('XHR Network Error');
           // Use translation for error toast
           const networkErrorMsg = t('providerCreateForm.networkError', 'Network error occurred. Please check your connection.');
           toast.error(networkErrorMsg);
           reject(new Error(networkErrorMsg));
         };
-        
-        xhr.onabort = function() {
+
+        xhr.onabort = function () {
           console.error('XHR Aborted');
           // Use translation for error toast
           const abortErrorMsg = t('providerCreateForm.requestAborted', 'Request was aborted.');
           toast.error(abortErrorMsg);
           reject(new Error(abortErrorMsg));
         };
-        
+
         const data = JSON.stringify({
           provider_name: provider,
           api_key: apiKey,
           name: name || null
         });
-        
+
         xhr.send(data);
       });
-      
+
     } catch (error: any) {
       console.error('Error creating provider key:', error);
       // Use translation for error toast, include original error if possible
@@ -191,7 +180,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
       <Typography variant="h6" gutterBottom>
         {t('providerCreateForm.title')}
       </Typography>
-      
+
       {/* Error and Success messages are now handled by react-hot-toast */}
       {/* {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -203,7 +192,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
           {t('providerCreateForm.keyAddedSuccess')}
         </Alert>
       )} */}
-      
+
       <Box component="form" onSubmit={handleSubmit}>
         <FormControl fullWidth sx={{ mb: 2 }}>
           {/* Use translation for label */}
@@ -223,7 +212,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
           {/* Use translation for helper text */}
           <FormHelperText>{t('providerCreateForm.selectProviderHelper', 'Select the AI provider for this API key')}</FormHelperText>
         </FormControl>
-        
+
         <TextField
           fullWidth
           label={t('providerCreateForm.apiKeyLabel')} // Use translation
@@ -235,7 +224,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
           // Use translation for helper text
           helperText={t('providerCreateForm.apiKeyHelper', 'Your API key will be encrypted before storage')}
         />
-        
+
         <TextField
           fullWidth
           label={t('providerCreateForm.descriptionLabel', 'Description (Optional)')} // Use translation
@@ -245,7 +234,7 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
           // Use translation for helper text
           helperText={t('providerCreateForm.descriptionHelper', 'Add a friendly name to help identify this key')}
         />
-        
+
         <Button
           type="submit"
           variant="contained"

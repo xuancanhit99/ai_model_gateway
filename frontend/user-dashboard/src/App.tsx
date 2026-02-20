@@ -1,10 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Toaster } from 'react-hot-toast';
-import { supabase } from './supabaseClient';
-import { Auth } from '@supabase/auth-ui-react';
-import { ThemeSupa } from '@supabase/auth-ui-shared';
-import type { Session } from '@supabase/supabase-js';
+import keycloak from './keycloakClient';
 import ApiKeyList from './components/ApiKeyList';
 import ApiKeyCreateForm from './components/ApiKeyCreateForm';
 import ProviderKeyManager from './components/ProviderKeyManager';
@@ -20,21 +17,27 @@ import KeyIcon from '@mui/icons-material/Key';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import { getAppTheme } from './theme';
 import ErrorBoundary from './components/ErrorBoundary';
-import HyperLogo from './assets/Hyper.svg'; // Import Hyper logo
+import HyperLogo from './assets/Hyper.svg';
 import './App.css';
-
-// Kiểu dữ liệu cho theme (sử dụng PaletteMode từ MUI)
-// type Theme = 'light' | 'dark'; // No longer needed, use PaletteMode
-
-// No longer need the separate Dashboard component
-// const drawerWidth = 240; // Defined below
 
 const drawerWidth = 240;
 
+// Type for Keycloak user info
+interface KeycloakUserInfo {
+  sub?: string;
+  email?: string;
+  name?: string;
+  preferred_username?: string;
+  given_name?: string;
+  family_name?: string;
+}
+
 function App() {
-  const { t, i18n } = useTranslation(); // Use the hook
-  const [session, setSession] = useState<Session | null>(null);
+  const { t, i18n } = useTranslation();
+  const [authenticated, setAuthenticated] = useState(false);
+  const [userInfo, setUserInfo] = useState<KeycloakUserInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [keycloakReady, setKeycloakReady] = useState(false);
   const [themeMode, setThemeMode] = useState<PaletteMode>(() => {
     const storedTheme = localStorage.getItem('app-theme');
     return (storedTheme === 'light' || storedTheme === 'dark') ? storedTheme : 'dark';
@@ -42,10 +45,9 @@ function App() {
   const muiTheme = getAppTheme(themeMode);
   const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
   const [drawerOpen, setDrawerOpen] = useState(!isMobile);
-  const [activeView, setActiveView] = useState<'gateway' | 'provider'>('provider'); // Đổi từ 'gateway' thành 'provider'
-  const [refreshGatewayCounter, setRefreshGatewayCounter] = useState(0); // State to refresh gateway list
-  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null); // State for language menu anchor
-  // Thêm state mới cho dialog đăng xuất
+  const [activeView, setActiveView] = useState<'gateway' | 'provider'>('provider');
+  const [refreshGatewayCounter, setRefreshGatewayCounter] = useState(0);
+  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
 
   // Callback for Gateway key creation
@@ -59,7 +61,7 @@ function App() {
     setDrawerOpen(!drawerOpen);
   };
 
-  // Close drawer on mobile after item click (optional)
+  // Close drawer on mobile after item click
   const handleDrawerClose = () => {
     if (isMobile) {
       setDrawerOpen(false);
@@ -71,44 +73,65 @@ function App() {
     setDrawerOpen(!isMobile);
   }, [isMobile]);
 
-
-  // Effect to get session
+  // --- Keycloak Init ---
   useEffect(() => {
-    setLoading(true); // Bắt đầu loading khi effect chạy
-    supabase?.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      // setLoading(false); // Chuyển setLoading vào cuối effect để đảm bảo theme được áp dụng
-    }).catch(error => {
-      console.error("Error getting session:", error);
-      // setLoading(false);
+    keycloak.init({
+      onLoad: 'check-sso',
+      silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
+      pkceMethod: 'S256',
+      checkLoginIframe: false,
+    }).then((auth) => {
+      setAuthenticated(auth);
+      setKeycloakReady(true);
+      setLoading(false);
+
+      if (auth) {
+        // Load user info
+        keycloak.loadUserInfo().then((info) => {
+          setUserInfo(info as KeycloakUserInfo);
+        }).catch((err) => {
+          console.error('Failed to load user info:', err);
+        });
+      }
+    }).catch((err) => {
+      console.error('Keycloak init failed:', err);
+      setKeycloakReady(true);
+      setLoading(false);
     });
 
-    const { data: { subscription } } = supabase?.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
-      }
-    ) ?? { data: { subscription: null } };
+    // Token refresh handler
+    keycloak.onTokenExpired = () => {
+      console.log('Token expired, refreshing...');
+      keycloak.updateToken(30).then((refreshed) => {
+        if (refreshed) {
+          console.log('Token refreshed successfully');
+        }
+      }).catch(() => {
+        console.error('Token refresh failed, logging out...');
+        keycloak.logout();
+      });
+    };
 
-    return () => {
-      subscription?.unsubscribe();
+    // Auth state change handler
+    keycloak.onAuthSuccess = () => {
+      setAuthenticated(true);
+      keycloak.loadUserInfo().then((info) => {
+        setUserInfo(info as KeycloakUserInfo);
+      });
+    };
+
+    keycloak.onAuthLogout = () => {
+      setAuthenticated(false);
+      setUserInfo(null);
     };
   }, []);
 
-  // Effect để lưu theme mode vào localStorage
+  // Effect to save theme mode to localStorage
   useEffect(() => {
-    localStorage.setItem('app-theme', themeMode); // Lưu lựa chọn mode
-    // Không cần áp class vào body nữa, ThemeProvider và CssBaseline sẽ xử lý
-    setLoading(false); // Kết thúc loading
-  }, [themeMode]); // Chạy lại khi themeMode thay đổi
+    localStorage.setItem('app-theme', themeMode);
+  }, [themeMode]);
 
-  // Effect to save language to localStorage - No longer needed, LanguageDetector handles this
-  // useEffect(() => {
-  //   localStorage.setItem('app-language', language);
-  //   // TODO: Integrate with i18n library here to actually change the language
-  //   console.log(`App language set to: ${language}`); // Placeholder log
-  // }, [language]);
-
-  // Hàm chuyển đổi theme mode
+  // Theme toggle
   const toggleTheme = () => {
     setThemeMode(prevMode => (prevMode === 'light' ? 'dark' : 'light'));
   };
@@ -126,7 +149,6 @@ function App() {
     i18n.changeLanguage(lang);
     handleLanguageMenuClose();
   };
-  // --- End Language Menu Handlers ---
 
   // --- Logout Dialog Handlers ---
   const handleLogoutDialogOpen = () => {
@@ -138,26 +160,40 @@ function App() {
   };
 
   const handleLogout = () => {
-    supabase?.auth.signOut();
     setLogoutDialogOpen(false);
+    keycloak.logout({ redirectUri: window.location.origin });
   };
-  // --- End Logout Dialog Handlers ---
 
-  // Function to toggle language using i18next - Replaced by menu
-  // const toggleLanguage = () => {
-  //   const newLang = i18n.language === 'en' ? 'vi' : 'en';
-  //   i18n.changeLanguage(newLang);
-  // };
+  // --- Login handler ---
+  const handleLogin = () => {
+    keycloak.login();
+  };
 
-  if (loading && !session) { // Show loading only when checking session initially
-     // Basic loading indicator, can be replaced with MUI Skeleton later
+  // Helper to get display email
+  const getUserEmail = (): string => {
+    return userInfo?.email || userInfo?.preferred_username || keycloak.tokenParsed?.email || '';
+  };
+
+  // Helper to create a mock session-like object for child components that need it
+  const getSessionProxy = () => {
+    if (!authenticated || !keycloak.token) return null;
+    return {
+      access_token: keycloak.token,
+      user: {
+        id: keycloak.tokenParsed?.sub || '',
+        email: getUserEmail(),
+      },
+    };
+  };
+
+  if (loading) {
     return (
-        <ThemeProvider theme={muiTheme}>
-            <CssBaseline />
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-                <Typography>{t('loading')}</Typography> {/* Use translation */}
-            </Box>
-        </ThemeProvider>
+      <ThemeProvider theme={muiTheme}>
+        <CssBaseline />
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+          <Typography>{t('loading')}</Typography>
+        </Box>
+      </ThemeProvider>
     );
   }
 
@@ -165,29 +201,36 @@ function App() {
   return (
     <ThemeProvider theme={muiTheme}>
       <CssBaseline />
-      {!session ? (
-        // --- Auth View (No Drawer) ---
-        supabase ? (
+      {!authenticated ? (
+        // --- Auth View (Login with IDSafe) ---
+        keycloakReady ? (
           <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', p: 2 }}>
-             {/* Add Logo and Header for Login Page */}
-             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
-                <img src={HyperLogo} alt="Hyper Logo" style={{ height: '80px', marginBottom: '16px' }} />
-                <Typography variant="h4" component="h1" gutterBottom color="primary">
-                  {t('appTitle')}
-                </Typography>
-             </Box>
-            <Box sx={{ maxWidth: '400px', width: '100%' }}>
-              <Auth
-                supabaseClient={supabase}
-                appearance={{ theme: ThemeSupa }}
-                providers={['google', 'github']}
-                theme={themeMode}
-              />
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
+              <img src={HyperLogo} alt="Hyper Logo" style={{ height: '80px', marginBottom: '16px' }} />
+              <Typography variant="h4" component="h1" gutterBottom color="primary">
+                {t('appTitle')}
+              </Typography>
+            </Box>
+            <Box sx={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>
+              <Button
+                variant="contained"
+                size="large"
+                onClick={handleLogin}
+                sx={{
+                  py: 1.5,
+                  px: 6,
+                  fontSize: '1.1rem',
+                  borderRadius: '8px',
+                  textTransform: 'none',
+                }}
+              >
+                {t('login.signInWithIDSafe', 'Đăng nhập với IDSafe')}
+              </Button>
             </Box>
           </Box>
         ) : (
-          <Container maxWidth="lg" sx={{ px: 3, pt: 5 }}> {/* Add padding top */}
-            <Alert severity="error">{t('authError')}</Alert> {/* Use translation */}
+          <Container maxWidth="lg" sx={{ px: 3, pt: 5 }}>
+            <Alert severity="error">{t('authError')}</Alert>
           </Container>
         )
       ) : (
@@ -195,16 +238,16 @@ function App() {
         <>
           {/* Menu button positioned fixed top-left (only when logged in) */}
           <IconButton
-           color="inherit" // Will inherit color from theme's text.primary
-           aria-label={t('toggleDrawer')} // Use translation
-           edge="start"
-           onClick={handleDrawerToggle}
+            color="inherit"
+            aria-label={t('toggleDrawer')}
+            edge="start"
+            onClick={handleDrawerToggle}
             sx={{
-              position: 'fixed', // Fix position
-              top: 16, // Adjust position as needed
+              position: 'fixed',
+              top: 16,
               left: 16,
-              zIndex: (theme) => theme.zIndex.drawer + 2, // Ensure it's above AppBar/Drawer content
-              display: { xs: 'inline-flex', md: 'none' } // Show only on mobile/tablet where drawer is temporary
+              zIndex: (theme) => theme.zIndex.drawer + 2,
+              display: { xs: 'inline-flex', md: 'none' }
             }}
           >
             <MenuIcon />
@@ -223,27 +266,27 @@ function App() {
                 [`& .MuiDrawer-paper`]: {
                   width: drawerWidth,
                   boxSizing: 'border-box',
-                  borderRight: 'none', // Remove border to match Figma
-                  backgroundColor: themeMode === 'light' ? 'info.dark' : muiTheme.palette.background.paper, // Đổi từ primary.light sang info.dark cho chế độ sáng
-                  color: themeMode === 'light' ? 'common.white' : 'inherit', // Text màu trắng trong light mode
+                  borderRight: 'none',
+                  backgroundColor: themeMode === 'light' ? 'info.dark' : muiTheme.palette.background.paper,
+                  color: themeMode === 'light' ? 'common.white' : 'inherit',
                 },
               }}
             >
               {/* Drawer Header */}
               <Toolbar sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', mb: 1, pt: 2 }}>
                 <img src={HyperLogo} alt="Hyper Logo" style={{ height: '50px', marginBottom: '12px' }} />
-                <Typography 
-                  variant="h6" 
-                  noWrap 
-                  component="div" 
+                <Typography
+                  variant="h6"
+                  noWrap
+                  component="div"
                   color={themeMode === 'light' ? 'common.white' : 'primary'}
                   sx={{ fontWeight: 'bold' }}
                 >
                   {t('appTitle')}
                 </Typography>
               </Toolbar>
-              <Divider sx={{ 
-                borderColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.2)' : undefined 
+              <Divider sx={{
+                borderColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.2)' : undefined
               }} />
 
               {/* Navigation List */}
@@ -301,29 +344,29 @@ function App() {
 
               {/* User Info / Logout */}
               <Box sx={{ p: 2 }}>
-                <Divider sx={{ 
+                <Divider sx={{
                   mb: 1,
-                  borderColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.2)' : undefined 
+                  borderColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.2)' : undefined
                 }} />
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
-                    <Avatar sx={{ 
-                      width: 32, 
-                      height: 32, 
-                      mr: 1, 
+                    <Avatar sx={{
+                      width: 32,
+                      height: 32,
+                      mr: 1,
                       bgcolor: themeMode === 'light' ? 'primary.light' : 'primary.main',
-                      color: themeMode === 'light' ? 'text.primary' : 'white' // Thêm màu tối cho chữ cái
+                      color: themeMode === 'light' ? 'text.primary' : 'white'
                     }}>
-                      {session.user.email ? session.user.email[0].toUpperCase() : '?'}
+                      {getUserEmail() ? getUserEmail()[0].toUpperCase() : '?'}
                     </Avatar>
                     <Typography variant="body2" noWrap sx={{ flexShrink: 1, color: themeMode === 'light' ? 'white' : undefined }}>
-                      {session.user.email}
+                      {getUserEmail()}
                     </Typography>
                   </Box>
                   <Tooltip title={t('userInfo.signOut')}>
-                    <IconButton 
-                      onClick={handleLogoutDialogOpen} 
-                      size="small" 
+                    <IconButton
+                      onClick={handleLogoutDialogOpen}
+                      size="small"
                       sx={{ color: themeMode === 'light' ? 'white' : undefined }}
                     >
                       <LogoutIcon fontSize="small" />
@@ -352,7 +395,7 @@ function App() {
                   }),
                   marginLeft: { md: 0 },
                 }),
-                pt: 4, // Keep padding top for content spacing
+                pt: 4,
               }}
             >
               {/* Header integrated into Main Content */}
@@ -363,7 +406,6 @@ function App() {
                 <Box>
                   {/* Language Menu Button */}
                   <Tooltip title={t('header.changeLanguage', 'Change Language')}>
-                    {/* Removed comment inside Tooltip to fix TS error */}
                     <IconButton
                       sx={{ ml: 1 }}
                       onClick={handleLanguageMenuOpen}
@@ -405,7 +447,7 @@ function App() {
                         {t('gatewayView.description')}
                       </Typography>
                       <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
-                        <ApiKeyList refreshTrigger={refreshGatewayCounter} session={session} onListChange={handleGatewayKeyCreated} />
+                        <ApiKeyList refreshTrigger={refreshGatewayCounter} session={getSessionProxy()} onListChange={handleGatewayKeyCreated} />
                         <Divider sx={{ my: 3 }} />
                         <ApiKeyCreateForm onKeyCreated={handleGatewayKeyCreated} />
                       </Paper>
@@ -423,34 +465,21 @@ function App() {
         </>
       )}
       <Toaster
-        position="top-right" // Changed position to top-right
+        position="top-right"
         reverseOrder={false}
         toastOptions={{
-          // Define default options for all toasts
-          duration: 5000, // 5 seconds for all toast types
-          // style: {
-          //   background: '#363636',
-          //   color: '#fff',
-          // },
-
-          // Define options for specific types
+          duration: 5000,
           success: {
             style: {
-              background: themeMode === 'light' ? '#27ae60' : '#abebc6', // Green background based on theme
-              color: themeMode === 'light' ? '#FFFFFF' : '#1d6f42', // Text color based on theme
+              background: themeMode === 'light' ? '#27ae60' : '#abebc6',
+              color: themeMode === 'light' ? '#FFFFFF' : '#1d6f42',
             },
-            iconTheme: { // Optional: style the default checkmark icon
-                primary: themeMode === 'light' ? '#FFFFFF' : '#1d6f42', // Icon color matches text
-                secondary: themeMode === 'light' ? '#27ae60' : '#abebc6', // Icon background matches toast background
+            iconTheme: {
+              primary: themeMode === 'light' ? '#FFFFFF' : '#1d6f42',
+              secondary: themeMode === 'light' ? '#27ae60' : '#abebc6',
             },
           },
-          error: {
-            // You could define specific styles for error toasts here too
-            // style: {
-            //   background: muiTheme.palette.error.main,
-            //   color: muiTheme.palette.error.contrastText,
-            // },
-          },
+          error: {},
         }}
       />
 

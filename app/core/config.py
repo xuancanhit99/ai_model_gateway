@@ -52,10 +52,14 @@ class Settings(BaseSettings):
         "image/jpeg", "image/png" # As specified for Grok
     ])
 
-    # --- Supabase Settings ---
+    # --- IDSafe (Keycloak OIDC) Settings ---
+    IDSAFE_ISSUER_URL: Optional[str] = None  # e.g. https://idsafe.vnpay.dev/realms/idsafe-uat
+    IDSAFE_CLIENT_ID: Optional[str] = None   # e.g. hyper-ai-gateway
+
+    # --- Supabase Settings (kept for data storage) ---
     SUPABASE_URL: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None # Key for backend operations
-    SUPABASE_JWT_SECRET: Optional[str] = None # Key for verifying user JWTs
+    SUPABASE_JWT_SECRET: Optional[str] = None # Legacy — kept for backward compat
 
     # --- Pydantic Settings Config ---
     model_config = {
