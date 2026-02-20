@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'; // Loại bỏ useCallback không dùng
-import type { RealtimeChannel } from '@supabase/supabase-js'; // Import type cho channel
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
+import { getAccessToken } from '../authHelper';
+import keycloak from '../keycloakClient';
 import toast from 'react-hot-toast';
 import {
   Box,
@@ -67,14 +69,14 @@ const ProviderKeyList: React.FC = () => {
   const [searchTerms, setSearchTerms] = useState<Record<string, string>>({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
-  const [keyToDelete, setKeyToDelete] = useState<{id: string, providerName: string} | null>(null);
+  const [keyToDelete, setKeyToDelete] = useState<{ id: string, providerName: string } | null>(null);
   const [providerToDeleteAll, setProviderToDeleteAll] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [importing, setImporting] = useState<Record<string, boolean>>({});
   const [importStats, setImportStats] = useState<Record<string, ImportStats | null>>({});
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [currentImportProvider, setCurrentImportProvider] = useState<string | null>(null);
-  
+
   // Add key dialog state
   const [addKeyDialogOpen, setAddKeyDialogOpen] = useState(false);
   const [providerToAddKey, setProviderToAddKey] = useState<string | null>(null);
@@ -84,12 +86,8 @@ const ProviderKeyList: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      // Lấy token
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) throw new Error(t('authError', 'Authentication token not available'));
+      const token = await getAccessToken();
 
       // Gọi API backend để lấy keys
       const response = await fetch('/api/v1/provider-keys/', {
@@ -106,10 +104,10 @@ const ProviderKeyList: React.FC = () => {
       const data = await response.json();
       // Sắp xếp lại dữ liệu nếu cần (API backend có thể đã sắp xếp)
       const sortedData = (data || []).sort((a: ProviderKey, b: ProviderKey) => {
-         if (a.provider_name < b.provider_name) return -1;
-         if (a.provider_name > b.provider_name) return 1;
-         // Nếu provider_name giống nhau, sắp xếp theo created_at giảm dần
-         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        if (a.provider_name < b.provider_name) return -1;
+        if (a.provider_name > b.provider_name) return 1;
+        // Nếu provider_name giống nhau, sắp xếp theo created_at giảm dần
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       });
       setProviderKeys(sortedData);
 
@@ -124,16 +122,14 @@ const ProviderKeyList: React.FC = () => {
   const fetchProviderKeyLogs = async () => {
     try {
       setLoadingLogs(true);
-      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
 
-      // Lấy token
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) {
-         // Không thể fetch log nếu chưa đăng nhập
-         console.warn('Cannot fetch logs: User not authenticated.');
-         setLogs([]); // Xóa log cũ nếu có
-         return;
+      let token: string;
+      try {
+        token = await getAccessToken();
+      } catch {
+        console.warn('Cannot fetch logs: User not authenticated.');
+        setLogs([]);
+        return;
       }
 
       // Gọi API backend để lấy logs
@@ -166,14 +162,11 @@ const ProviderKeyList: React.FC = () => {
   // --- Logging ---
   const addProviderKeyLog = async (action: 'ADD' | 'DELETE' | 'SELECT' | 'UNSELECT', providerName: string, keyId: string | null = null, description: string = '') => {
     try {
-      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
-
-      // Lấy token xác thực
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) {
+      let token: string;
+      try {
+        token = await getAccessToken();
+      } catch {
         console.error('Authentication token not available for logging.');
-        // Không throw lỗi ở đây để không chặn các hành động khác, chỉ log lỗi
         return;
       }
 
@@ -220,26 +213,23 @@ const ProviderKeyList: React.FC = () => {
     if (!supabase) return;
 
     let realtimeChannel: RealtimeChannel | null = null;
-    let userId: string | null = null;
 
     const setupSubscription = async () => {
       try {
-        // Thêm kiểm tra supabase rõ ràng trước khi truy cập .auth
         if (!supabase) {
-            console.error("Realtime setup error: Supabase client is null.");
-            return;
+          console.error("Realtime setup error: Supabase client is null.");
+          return;
         }
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user?.id) {
+        // Get user ID from Keycloak instead of supabase.auth
+        const userId = keycloak.subject;
+        if (!userId) {
           console.warn("Realtime logs: User not authenticated.");
-          return; // Không thể subscribe nếu chưa đăng nhập
+          return;
         }
-        userId = session.user.id;
 
-        // Thêm kiểm tra supabase rõ ràng trước khi truy cập .channel
         if (!supabase) {
-            console.error("Realtime setup error: Supabase client became null before creating channel.");
-            return;
+          console.error("Realtime setup error: Supabase client became null before creating channel.");
+          return;
         }
         // Tạo channel duy nhất cho user và bảng này
         realtimeChannel = supabase.channel(`provider_key_logs_user_${userId}`);
@@ -278,7 +268,7 @@ const ProviderKeyList: React.FC = () => {
               // Có thể thử subscribe lại hoặc hiển thị thông báo lỗi
               // setLoadingLogs(false); // Dừng loading nếu có lỗi
             } else {
-               console.log('Realtime: Subscription status:', status);
+              console.log('Realtime: Subscription status:', status);
             }
           });
 
@@ -298,8 +288,8 @@ const ProviderKeyList: React.FC = () => {
           .then(() => console.log("Realtime: Unsubscribed from provider_key_logs."))
           .catch(err => console.error("Realtime: Error unsubscribing", err));
       } else if (realtimeChannel) {
-          // Xử lý trường hợp supabase bị null nhưng channel vẫn tồn tại (ít xảy ra)
-          console.warn("Realtime: Supabase client became null before unsubscribing channel.");
+        // Xử lý trường hợp supabase bị null nhưng channel vẫn tồn tại (ít xảy ra)
+        console.warn("Realtime: Supabase client became null before unsubscribing channel.");
       }
     };
   }, [supabase]); // Chỉ chạy lại nếu instance supabase thay đổi (thường là không)
@@ -307,15 +297,10 @@ const ProviderKeyList: React.FC = () => {
   // --- Key Handlers ---
   const handleSelectKey = async (keyId: string, providerName: string, currentIsSelected: boolean) => {
     try {
-      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
-
       const newIsSelectedValue = !currentIsSelected;
       const logAction: 'SELECT' | 'UNSELECT' = newIsSelectedValue ? 'SELECT' : 'UNSELECT';
 
-      // Lấy token
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) throw new Error(t('authError', 'Authentication token not available'));
+      const token = await getAccessToken();
 
       // Gọi API backend để cập nhật (PATCH)
       const response = await fetch(`/api/v1/provider-keys/${keyId}`, {
@@ -361,7 +346,7 @@ const ProviderKeyList: React.FC = () => {
   };
 
   const handleDeleteKey = (keyId: string, providerName: string) => {
-    setKeyToDelete({id: keyId, providerName});
+    setKeyToDelete({ id: keyId, providerName });
     setDeleteDialogOpen(true);
   };
 
@@ -373,12 +358,7 @@ const ProviderKeyList: React.FC = () => {
     const keyNameForLog = keyData?.name;
 
     try {
-      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
-
-      // Lấy token
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) throw new Error(t('authError', 'Authentication token not available'));
+      const token = await getAccessToken();
 
       // Gọi API backend để xóa (DELETE)
       const response = await fetch(`/api/v1/provider-keys/${id}`, {
@@ -390,9 +370,9 @@ const ProviderKeyList: React.FC = () => {
 
       // Check status 204 No Content for successful deletion
       if (response.status !== 204) {
-         // Nếu không phải 204, cố gắng đọc lỗi
-         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-         throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to delete key'}`);
+        // Nếu không phải 204, cố gắng đọc lỗi
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to delete key'}`);
       }
 
       // Thông báo thành công
@@ -427,12 +407,7 @@ const ProviderKeyList: React.FC = () => {
     const providerName = providerToDeleteAll;
     if (!providerName) return;
     try {
-      if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
-
-      // Lấy token
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) throw new Error(t('authError', 'Authentication token not available'));
+      const token = await getAccessToken();
 
       // Gọi API backend để xóa tất cả theo provider (DELETE với query param)
       const response = await fetch(`/api/v1/provider-keys/?provider_name=${encodeURIComponent(providerName)}`, {
@@ -444,8 +419,8 @@ const ProviderKeyList: React.FC = () => {
 
       // Check status 204 No Content for successful deletion
       if (response.status !== 204) {
-         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-         throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to delete keys'}`);
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(`API Error (${response.status}): ${errorData.detail || 'Failed to delete keys'}`);
       }
 
       // Thông báo thành công
@@ -543,12 +518,8 @@ const ProviderKeyList: React.FC = () => {
   };
 
   const importKeysToProvider = async (keys: { description: string, key: string }[], providerName: string): Promise<ImportStats> => {
-    if (!supabase) throw new Error(t('authError', 'Supabase client not initialized'));
-
     const stats: ImportStats = { total: keys.length, success: 0, failed: 0 };
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
-    if (!token) throw new Error(t('authError', 'Authentication token not available'));
+    const token = await getAccessToken();
 
     for (const item of keys) {
       if (!item.key || item.key.trim() === '') {
@@ -726,7 +697,7 @@ const ProviderKeyList: React.FC = () => {
           }
         }}
       />
-      
+
       {/* Add Provider Key Dialog */}
       {providerToAddKey && (
         <AddProviderKeyDialog

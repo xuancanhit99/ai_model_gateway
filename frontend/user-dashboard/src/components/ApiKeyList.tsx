@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react'; // Added useCallback
-import { supabase } from '../supabaseClient';
-import toast from 'react-hot-toast'; // Import toast
-import type { Session } from '@supabase/supabase-js';
-import { useTranslation } from 'react-i18next'; // Import useTranslation
+import React, { useState, useEffect, useCallback } from 'react';
+import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import { getAccessToken } from '../authHelper';
 import {
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Typography, Box, CircularProgress, Alert, IconButton, Tooltip,
     Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField, Button // Added Dialog components
@@ -23,9 +22,9 @@ interface ApiKeyInfo {
 }
 
 interface ApiKeyListProps {
-    session: Session;
+    session: any; // Session proxy from App.tsx (Keycloak token)
     onListChange: () => void;
-    refreshTrigger: number; // Add the new prop
+    refreshTrigger: number;
 }
 
 const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshTrigger }) => {
@@ -40,7 +39,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
     const [confirmDeleteDialogOpen, setConfirmDeleteDialogOpen] = useState(false);
     const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
     const [deleteConfirmationInput, setDeleteConfirmationInput] = useState('');
-    
+
     // Dialog states for deactivate/activate confirmation
     const [deactivateDialogOpen, setDeactivateDialogOpen] = useState(false);
     const [activateDialogOpen, setActivateDialogOpen] = useState(false);
@@ -51,20 +50,8 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             setLoading(true);
             setError(null);
 
-            // Check if supabase client is available
-            if (!supabase) {
-                setError("Supabase client is not initialized. Check environment variables.");
-                setLoading(false);
-                return; // Exit early if no client
-            }
-
             try {
-                // Now safe to use supabase
-                const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-                if (sessionError || !sessionData.session) {
-                    throw new Error(sessionError?.message || 'Could not get user session.');
-                }
-                const token = sessionData.session.access_token;
+                const token = await getAccessToken();
 
                 // Use a relative path. Assumes the reverse proxy/ingress is configured
                 // to route /api/v1/* requests to the backend service.
@@ -101,7 +88,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
 
             } catch (err: any) {
                 console.error("Error fetching API keys:", err);
-                 // Ensure error message is always a string
+                // Ensure error message is always a string
                 const errorMessage = err instanceof Error ? err.message : String(err);
                 setError(errorMessage || 'An unexpected error occurred.');
                 setKeys([]); // Clear keys on fetch error to avoid rendering stale/bad data
@@ -111,7 +98,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
         };
 
         fetchApiKeys();
-    // Add refreshTrigger to dependency array
+        // Add refreshTrigger to dependency array
     }, [session, onListChange, refreshTrigger]); // Re-fetch if session, list changes, or refreshTrigger changes
 
     // Function to open deactivate confirmation dialog
@@ -128,21 +115,11 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
 
     const handleDeactivate = async (keyPrefix: string) => {
         setDeactivateDialogOpen(false);
-        setDeactivating(keyPrefix); // Set loading state for this specific key
+        setDeactivating(keyPrefix);
         setError(null);
 
-        if (!supabase) {
-            setError("Supabase client is not initialized.");
-            setDeactivating(null);
-            return;
-        }
-
         try {
-            const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-            if (sessionError || !sessionData.session) {
-                throw new Error(sessionError?.message || 'Could not get user session.');
-            }
-            const token = sessionData.session.access_token;
+            const token = await getAccessToken();
 
             // Use a relative path (DELETE endpoint for deactivation)
             const apiUrl = `/api/v1/keys/${keyPrefix}`;
@@ -164,7 +141,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             setKeys(prevKeys => prevKeys.map(k => k.key_prefix === keyPrefix ? { ...k, is_active: false } : k));
             toast.success(responseData.message || 'API Key deactivated successfully.');
             // onListChange(); // Optional: Trigger list refresh if needed elsewhere
- 
+
         } catch (err: any) {
             console.error("Error deactivating API key:", err);
             const errorMessage = err instanceof Error ? err.message : String(err);
@@ -177,21 +154,11 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
 
     const handleActivate = async (keyPrefix: string) => {
         setActivateDialogOpen(false);
-        setActivating(keyPrefix); // Set loading state for this specific key
+        setActivating(keyPrefix);
         setError(null);
 
-        if (!supabase) {
-            setError("Supabase client is not initialized.");
-            setActivating(null);
-            return;
-        }
-
         try {
-            const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-            if (sessionError || !sessionData.session) {
-                throw new Error(sessionError?.message || 'Could not get user session.');
-            }
-            const token = sessionData.session.access_token;
+            const token = await getAccessToken();
 
             // *** Assume a PATCH endpoint exists for activation ***
             // If the backend uses a different method/endpoint, update here.
@@ -218,7 +185,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             setKeys(prevKeys => prevKeys.map(k => k.key_prefix === keyPrefix ? { ...k, is_active: true } : k));
             toast.success(responseData.message || 'API Key activated successfully.');
             // onListChange(); // Optional: Trigger list refresh if needed elsewhere
- 
+
         } catch (err: any) {
             console.error("Error activating API key:", err);
             const errorMessage = err instanceof Error ? err.message : String(err);
@@ -250,24 +217,14 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             return;
         }
 
-        const keyPrefix = keyToDelete; // Store keyPrefix before closing dialog potentially clears it
-        handleCloseDeleteConfirmationDialog(); // Close dialog immediately
+        const keyPrefix = keyToDelete;
+        handleCloseDeleteConfirmationDialog();
 
-        setDeleting(keyPrefix); // Set loading state for this specific key
+        setDeleting(keyPrefix);
         setError(null);
 
-        if (!supabase) {
-            setError("Supabase client is not initialized.");
-            setDeleting(null);
-            return;
-        }
-
         try {
-            const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-            if (sessionError || !sessionData.session) {
-                throw new Error(sessionError?.message || 'Could not get user session.');
-            }
-            const token = sessionData.session.access_token;
+            const token = await getAccessToken();
 
             // Call the new permanent delete endpoint
             const apiUrl = `/api/v1/keys/${keyPrefix}/permanent`;
@@ -291,7 +248,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             // Sử dụng i18n cho thông báo, bỏ qua responseData.message
             toast.success(t('apiKeys.deleteSuccess', 'API Key permanently deleted successfully.'));
             // No need to call onListChange here
- 
+
         } catch (err: any) {
             console.error("Error permanently deleting API key:", err);
             const errorMessage = err instanceof Error ? err.message : String(err);
@@ -299,7 +256,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
         } finally {
             setDeleting(null); // Clear loading state for this key
         }
-    }, [keyToDelete, deleteConfirmationInput, supabase]); // Add dependencies
+    }, [keyToDelete, deleteConfirmationInput]);
 
 
     if (loading) {
@@ -325,7 +282,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
             {/* Display Initial Fetch Error Message */}
             {error && <Alert severity="error" sx={{ mt: 2, mb: 2 }}>{error}</Alert>}
             {/* Success messages are now handled by react-hot-toast */}
- 
+
             {keys.length === 0 ? (
                 <Typography sx={{ mt: 2 }}>You haven't created any API keys yet.</Typography>
             ) : (
@@ -450,8 +407,8 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleCloseDeleteConfirmationDialog}>Cancel</Button>
-                    <Button 
-                        onClick={handleConfirmDeletion} 
+                    <Button
+                        onClick={handleConfirmDeletion}
                         color="error"
                         disabled={deleteConfirmationInput !== 'DELETE'}
                     >
@@ -459,7 +416,7 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                     </Button>
                 </DialogActions>
             </Dialog>
-            
+
             {/* Deactivate confirmation dialog */}
             <Dialog open={deactivateDialogOpen} onClose={() => setDeactivateDialogOpen(false)}>
                 <DialogTitle>Confirm Deactivation</DialogTitle>
@@ -471,8 +428,8 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setDeactivateDialogOpen(false)}>Cancel</Button>
-                    <Button 
-                        onClick={() => keyToToggle && handleDeactivate(keyToToggle)} 
+                    <Button
+                        onClick={() => keyToToggle && handleDeactivate(keyToToggle)}
                         color="warning"
                     >
                         Deactivate
@@ -491,8 +448,8 @@ const ApiKeyList: React.FC<ApiKeyListProps> = ({ session, onListChange, refreshT
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setActivateDialogOpen(false)}>Cancel</Button>
-                    <Button 
-                        onClick={() => keyToToggle && handleActivate(keyToToggle)} 
+                    <Button
+                        onClick={() => keyToToggle && handleActivate(keyToToggle)}
                         color="success"
                     >
                         Activate
