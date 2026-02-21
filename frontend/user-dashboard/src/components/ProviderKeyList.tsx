@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { getAccessToken } from '../authHelper';
-import keycloak from '../keycloakClient';
 import toast from 'react-hot-toast';
 import {
   Box,
@@ -210,88 +208,23 @@ const ProviderKeyList: React.FC = () => {
 
   // Effect để thiết lập và dọn dẹp Realtime subscription cho logs
   useEffect(() => {
+    /* 
+    // Tạm thời vô hiệu hoá Realtime Subscription của Supabase.
+    // Vì hiện tại Frontend đang dùng Keycloak JWT để xác thực (thông qua Backend),
+    // việc kết nối trực tiếp từ Frontend lên Supabase Realtime bằng Anon Key 
+    // sẽ bị từ chối truy cập (401/WebSocket Error).
     if (!supabase) return;
 
     let realtimeChannel: RealtimeChannel | null = null;
-
-    const setupSubscription = async () => {
-      try {
-        if (!supabase) {
-          console.error("Realtime setup error: Supabase client is null.");
-          return;
-        }
-        // Get user ID from Keycloak instead of supabase.auth
-        const userId = keycloak.subject;
-        if (!userId) {
-          console.warn("Realtime logs: User not authenticated.");
-          return;
-        }
-
-        if (!supabase) {
-          console.error("Realtime setup error: Supabase client became null before creating channel.");
-          return;
-        }
-        // Tạo channel duy nhất cho user và bảng này
-        realtimeChannel = supabase.channel(`provider_key_logs_user_${userId}`);
-
-        realtimeChannel
-          .on(
-            'postgres_changes',
-            {
-              event: 'INSERT',
-              schema: 'public',
-              table: 'provider_key_logs',
-              filter: `user_id=eq.${userId}` // Chỉ lắng nghe log của user hiện tại
-            },
-            (payload) => {
-              console.log('Realtime: New log received:', payload.new);
-              // Thêm log mới vào đầu danh sách
-              setLogs((currentLogs) => {
-                const newLog = payload.new as ProviderKeyLog;
-                // Tránh thêm trùng lặp nếu có thể (dù INSERT thường không trùng)
-                if (currentLogs.some(log => log.id === newLog.id)) {
-                  return currentLogs;
-                }
-                // Giữ lại tối đa ví dụ 100 logs để tránh state quá lớn
-                const updatedLogs = [newLog, ...currentLogs];
-                return updatedLogs.slice(0, 100);
-              });
-            }
-          )
-          .subscribe((status, err) => {
-            if (status === 'SUBSCRIBED') {
-              console.log('Realtime: Subscribed to provider_key_logs updates!');
-              // Có thể set loadingLogs = false ở đây nếu chỉ dựa vào realtime sau subscribe thành công
-              // setLoadingLogs(false);
-            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-              console.error('Realtime: Subscription error/closed:', status, err);
-              // Có thể thử subscribe lại hoặc hiển thị thông báo lỗi
-              // setLoadingLogs(false); // Dừng loading nếu có lỗi
-            } else {
-              console.log('Realtime: Subscription status:', status);
-            }
-          });
-
-      } catch (error) {
-        console.error("Error setting up realtime subscription:", error);
-        // setLoadingLogs(false); // Dừng loading nếu có lỗi setup
-      }
-    };
-
+    const setupSubscription = async () => { ... }
     setupSubscription();
 
-    // Cleanup function khi component unmount
     return () => {
-      // Thêm kiểm tra supabase !== null trước khi gọi removeChannel
       if (realtimeChannel && supabase) {
-        supabase.removeChannel(realtimeChannel)
-          .then(() => console.log("Realtime: Unsubscribed from provider_key_logs."))
-          .catch(err => console.error("Realtime: Error unsubscribing", err));
-      } else if (realtimeChannel) {
-        // Xử lý trường hợp supabase bị null nhưng channel vẫn tồn tại (ít xảy ra)
-        console.warn("Realtime: Supabase client became null before unsubscribing channel.");
+        supabase.removeChannel(realtimeChannel);
       }
     };
+    */
   }, [supabase]); // Chỉ chạy lại nếu instance supabase thay đổi (thường là không)
 
   // --- Key Handlers ---

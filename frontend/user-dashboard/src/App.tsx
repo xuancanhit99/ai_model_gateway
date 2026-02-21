@@ -75,52 +75,98 @@ function App() {
 
   // --- Keycloak Init ---
   useEffect(() => {
-    keycloak.init({
-      pkceMethod: 'S256',
+    const initOptions = {
+      onLoad: 'check-sso' as const,
+      pkceMethod: 'S256' as const,
       checkLoginIframe: false,
-    }).then((auth: boolean) => {
-      setAuthenticated(auth);
+    };
+
+    const clearTokens = () => {
+      localStorage.removeItem('kc_token');
+      localStorage.removeItem('kc_refreshToken');
+      localStorage.removeItem('kc_idToken');
+    };
+
+    const saveTokens = () => {
+      if (keycloak.token) localStorage.setItem('kc_token', keycloak.token);
+      if (keycloak.refreshToken) localStorage.setItem('kc_refreshToken', keycloak.refreshToken);
+      if (keycloak.idToken) localStorage.setItem('kc_idToken', keycloak.idToken);
+    };
+
+    const finishInit = (isAuthenticated: boolean) => {
+      setAuthenticated(isAuthenticated);
       setKeycloakReady(true);
       setLoading(false);
-
-      if (auth) {
-        // Load user info
+      if (isAuthenticated) {
+        saveTokens();
         keycloak.loadUserInfo().then((info) => {
           setUserInfo(info as KeycloakUserInfo);
-        }).catch((err) => {
-          console.error('Failed to load user info:', err);
-        });
+        }).catch(err => console.error('Failed to load user info:', err));
       }
+    };
+
+    keycloak.init(initOptions).then((auth: boolean) => {
+      if (!auth) {
+        // Fallback: If check-sso fails (e.g., due to page reload without iframe),
+        // try to restore from localStorage using the refresh token.
+        const storedToken = localStorage.getItem('kc_token');
+        const storedRefresh = localStorage.getItem('kc_refreshToken');
+
+        if (storedToken && storedRefresh) {
+          console.log('Restoring Keycloak session from localStorage...');
+          keycloak.token = storedToken;
+          keycloak.refreshToken = storedRefresh;
+          keycloak.idToken = localStorage.getItem('kc_idToken') || undefined;
+
+          keycloak.updateToken(-1).then(() => {
+            console.log('Session restored successfully.');
+            finishInit(true);
+          }).catch(() => {
+            console.warn('Stored session invalid or expired. Logging out.');
+            clearTokens();
+            keycloak.clearToken();
+            finishInit(false);
+          });
+          return; // Skip normal finishInit
+        }
+      }
+
+      finishInit(auth);
     }).catch((err) => {
       console.error('Keycloak init failed:', err);
-      setKeycloakReady(true);
-      setLoading(false);
+      finishInit(false);
     });
 
     // Token refresh handler
     keycloak.onTokenExpired = () => {
       console.log('Token expired, refreshing...');
-      keycloak.updateToken(30).then((refreshed) => {
-        if (refreshed) {
-          console.log('Token refreshed successfully');
-        }
+      keycloak.updateToken(30).then(() => {
+        console.log('Token refreshed successfully');
+        saveTokens();
       }).catch(() => {
         console.error('Token refresh failed, logging out...');
-        keycloak.logout();
+        clearTokens();
+        keycloak.logout({ redirectUri: window.location.origin });
       });
     };
 
     // Auth state change handler
     keycloak.onAuthSuccess = () => {
       setAuthenticated(true);
+      saveTokens();
       keycloak.loadUserInfo().then((info) => {
         setUserInfo(info as KeycloakUserInfo);
       });
     };
 
+    keycloak.onAuthRefreshSuccess = () => {
+      saveTokens();
+    };
+
     keycloak.onAuthLogout = () => {
       setAuthenticated(false);
       setUserInfo(null);
+      clearTokens();
     };
   }, []);
 
@@ -159,6 +205,12 @@ function App() {
 
   const handleLogout = () => {
     setLogoutDialogOpen(false);
+    // Xoá token cục bộ ngay lập tức để tránh reload bị dính lại
+    localStorage.removeItem('kc_token');
+    localStorage.removeItem('kc_refreshToken');
+    localStorage.removeItem('kc_idToken');
+
+    // Thực hiện logout chuẩn OIDC, xoá session trên IDSafe và quay lại trang web hiện tại
     keycloak.logout({ redirectUri: window.location.origin });
   };
 
