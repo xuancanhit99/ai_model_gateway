@@ -268,14 +268,13 @@ async def get_current_user(
         # Decode and verify the token
         decode_options = {
             "verify_exp": True,
-            "verify_aud": bool(client_id),  # Only verify audience if client_id is set
+            "verify_aud": False,  # Keycloak public clients don't add their client_id to 'aud' by default
         }
 
         payload = pyjwt.decode(
             token.credentials,
             signing_key.key,
             algorithms=[ALGORITHM],
-            audience=client_id if client_id else None,
             issuer=issuer_url,
             options=decode_options,
         )
