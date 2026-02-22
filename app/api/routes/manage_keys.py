@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import logging
 
 from app.core.auth import get_current_user, generate_api_key, hash_api_key
-from app.core.supabase_client import get_supabase_client
+from app.core.db import get_db_client
 from app.models.schemas import (
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
@@ -15,8 +15,7 @@ from app.models.schemas import (
     ErrorResponse,
     
 )
-from supabase import Client
-from postgrest import APIResponse # Import for type hinting
+from app.core.db import PostgresCompatClient as Client
 from pydantic import BaseModel # Import BaseModel for simple request body
 
 logger = logging.getLogger(__name__)
@@ -43,7 +42,7 @@ class ApiKeyActivatePayload(BaseModel):
 async def create_new_api_key(
     request_body: ApiKeyCreateRequest,
     current_user_id: str = Depends(get_current_user), # Get user ID from JWT
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """
     Generates a new API key (hp_...), hashes it, stores metadata in Supabase,
@@ -115,7 +114,7 @@ async def create_new_api_key(
 )
 async def list_user_api_keys(
     current_user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """
     Retrieves metadata for all API keys associated with the authenticated user.
@@ -165,7 +164,7 @@ async def activate_api_key(
     key_prefix_to_activate: str = Path(..., description="The prefix (first 6 chars after 'hp_') of the API key to activate."),
     payload: ApiKeyActivatePayload = Body(..., description="Payload indicating the desired state (must be is_active: true)"),
     current_user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """
     Activates (sets is_active=true) an API key identified by its prefix,
@@ -255,7 +254,7 @@ async def activate_api_key(
 async def deactivate_api_key(
     key_prefix_to_delete: str = Path(..., description="The prefix (first 6 chars after 'hp_') of the API key to deactivate."),
     current_user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """
     Deactivates (sets is_active=false) an API key identified by its prefix,
@@ -333,7 +332,7 @@ async def deactivate_api_key(
 async def delete_api_key_permanently(
     key_prefix_to_delete: str = Path(..., description="The prefix (first 6 chars after 'hp_') of the API key to permanently delete."),
     current_user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """
     Permanently deletes an API key record identified by its prefix from the database,

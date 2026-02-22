@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, List, Dict, Any # Thêm List, Dict, Any
-from supabase import Client
+from app.core.db import PostgresCompatClient as Client
 
-from app.core.supabase_client import get_supabase_client # Sửa thành get_supabase_client
+from app.core.db import get_db_client # PostgreSQL DB dependency
 from app.core.auth import get_current_user
 
 router = APIRouter()
@@ -21,7 +21,7 @@ class ActivityLogCreate(BaseModel):
 # Chuyển thành hàm đồng bộ (def)
 def create_activity_log(
     log_data: ActivityLogCreate,
-    supabase: Client = Depends(get_supabase_client),
+    supabase: Client = Depends(get_db_client),
     user_id: str = Depends(get_current_user) # Nhận trực tiếp user_id (string) từ dependency
 ):
     """
@@ -63,7 +63,7 @@ def create_activity_log(
 def get_activity_logs(
     limit: int = 50, # Thêm limit làm query parameter
     user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """
     Retrieves the most recent activity logs for the authenticated user.

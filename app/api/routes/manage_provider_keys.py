@@ -2,11 +2,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, Field
+from datetime import datetime
+from uuid import UUID
 
-from app.core.auth import get_current_user
-from app.core.config import get_settings
-from app.core.supabase_client import get_supabase_client
-from supabase import Client
+from app.core.auth import get_current_user, get_encryption_key
+from app.core.db import get_db_client
+from app.core.db import PostgresCompatClient as Client
 import logging
 from cryptography.fernet import Fernet
 import base64  # Thêm import base64 để sử dụng trong mã hóa/giải mã
@@ -17,9 +18,6 @@ logger = logging.getLogger(__name__)
 # Create router (loại bỏ dấu / ở cuối để tránh redirect)
 router = APIRouter(prefix="/api/v1/provider-keys")
 
-# Initialize settings
-settings = get_settings()
-
 # --- Pydantic Models ---
 class ProviderKeyBase(BaseModel):
     provider_name: str = Field(..., description="Provider name (google, xai, gigachat, perplexity)")
@@ -29,39 +27,20 @@ class ProviderKeyCreate(ProviderKeyBase):
     api_key: str = Field(..., description="Provider API key to store (will be encrypted)")
 
 class ProviderKeyInfo(ProviderKeyBase):
-    id: str = Field(..., description="Unique ID for the provider key")
+    id: UUID = Field(..., description="Unique ID for the provider key")
     is_selected: bool = Field(..., description="Whether this key is selected as default for this provider")
-    created_at: str = Field(..., description="Creation timestamp")
+    created_at: datetime = Field(..., description="Creation timestamp")
 
 class ProviderKeyUpdate(BaseModel):
     name: Optional[str] = Field(None, description="Optional descriptive name for the key")
     is_selected: Optional[bool] = Field(None, description="Whether this key should be selected as default")
 
 # --- Helper Functions ---
-def get_encryption_key() -> bytes:
-    """Get encryption key from settings or generate one"""
-    # In production, you should store this key securely and persistently
-    # For now, we'll use a derived key from SUPABASE_SERVICE_ROLE_KEY for simplicity
-    
-    # WARNING: In a real production environment, you would want a dedicated 
-    # encryption key that is properly managed and stored securely
-    if not settings.SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server encryption configuration missing"
-        )
-    
-    # Derive a 32-byte key (suitable for Fernet)
-    # In production, use a proper key management solution
-    import hashlib
-    derived_key = hashlib.sha256(settings.SUPABASE_SERVICE_ROLE_KEY.encode()).digest()
-    return derived_key
-
 def encrypt_api_key(api_key: str) -> str:
     """Encrypt an API key before storing it"""
     try:
         key = get_encryption_key()
-        f = Fernet(Fernet.generate_key() if not key else base64.urlsafe_b64encode(key))
+        f = Fernet(base64.urlsafe_b64encode(key))
         return f.encrypt(api_key.encode()).decode()
     except Exception as e:
         logger.error(f"Error encrypting API key: {e}")
@@ -89,7 +68,7 @@ def decrypt_api_key(encrypted_key: str) -> str:
 def create_provider_key(
     key_data: ProviderKeyCreate,
     user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """Create a new provider API key for the authenticated user"""
     
@@ -135,7 +114,7 @@ def create_provider_key(
 async def get_provider_keys(
     provider: Optional[str] = None,
     user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """Get all provider keys for the authenticated user"""
     try:
@@ -159,7 +138,7 @@ async def get_provider_keys(
 async def get_provider_key(
     key_id: str,
     user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """Get a specific provider key by ID"""
     try:
@@ -187,7 +166,7 @@ async def update_provider_key(
     key_id: str,
     key_update: ProviderKeyUpdate,
     user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """Update a provider key (name or selection status)"""
     try:
@@ -200,41 +179,62 @@ async def update_provider_key(
                 detail="Provider key not found or not owned by you"
             )
             
-        provider_name = check_response.data[0]['provider_name']
-        
-        # Prepare update data
+        # Atomic path: when selecting a key, update the whole provider set in one SQL statement.
+        if key_update.is_selected is True:
+            has_name_update = key_update.name is not None
+            rows = supabase.execute_returning(
+                """
+                WITH target AS (
+                    SELECT provider_name
+                    FROM user_provider_keys
+                    WHERE id::text = %s AND user_id = %s
+                ),
+                updated AS (
+                    UPDATE user_provider_keys
+                    SET
+                        is_selected = CASE WHEN id::text = %s THEN TRUE ELSE FALSE END,
+                        name = CASE
+                            WHEN id::text = %s AND %s THEN %s::text
+                            ELSE name
+                        END
+                    WHERE user_id = %s
+                      AND provider_name = (SELECT provider_name FROM target)
+                    RETURNING *
+                )
+                SELECT * FROM updated WHERE id::text = %s
+                """,
+                (key_id, user_id, key_id, key_id, has_name_update, key_update.name, user_id, key_id),
+            )
+            if not rows:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to update provider key"
+                )
+            return rows[0]
+
+        # Non-select path: standard partial update on the target row.
         update_data = {}
         if key_update.name is not None:
             update_data["name"] = key_update.name
-            
         if key_update.is_selected is not None:
             update_data["is_selected"] = key_update.is_selected
-            
-            # If setting to selected, unselect other keys for this provider
-            if key_update.is_selected:
-                # Transaction would be better here but we'll use sequential operations
-                # First, unselect all other keys for this provider
-                supabase.table("user_provider_keys").update(
-                    {"is_selected": False}
-                ).eq("user_id", user_id).eq("provider_name", provider_name).execute()
-        
-        # Update the specified key
+
         if update_data:
             response = supabase.table("user_provider_keys").update(
                 update_data
             ).eq("id", key_id).eq("user_id", user_id).execute()
-            
+
             if not response.data:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to update provider key"
                 )
-                
+
             return response.data[0]
-        else:
-            # If nothing to update, just return the current data
-            response = supabase.table("user_provider_keys").select("*").eq("id", key_id).eq("user_id", user_id).execute()
-            return response.data[0]
+
+        # If nothing to update, just return the current data.
+        response = supabase.table("user_provider_keys").select("*").eq("id", key_id).eq("user_id", user_id).execute()
+        return response.data[0]
             
     except HTTPException as e:
         raise e
@@ -249,7 +249,7 @@ async def update_provider_key(
 async def delete_provider_key(
     key_id: str,
     user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """Delete a provider key"""
     try:
@@ -280,7 +280,7 @@ async def delete_provider_key(
 def delete_all_provider_keys_for_provider(
     provider_name: str, # Lấy từ query parameter
     user_id: str = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase_client)
+    supabase: Client = Depends(get_db_client)
 ):
     """Delete all provider keys for a specific provider for the authenticated user"""
     try:

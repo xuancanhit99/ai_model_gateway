@@ -6,7 +6,7 @@ import ApiKeyList from './components/ApiKeyList';
 import ApiKeyCreateForm from './components/ApiKeyCreateForm';
 import ProviderKeyManager from './components/ProviderKeyManager';
 import {
-  Box, ThemeProvider, CssBaseline, PaletteMode, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useMediaQuery, Container, Paper, Alert, Avatar, Tooltip, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button
+  Box, ThemeProvider, CssBaseline, PaletteMode, Toolbar, IconButton, Typography, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, useMediaQuery, Container, Paper, Alert, Avatar, Tooltip, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button, TextField
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -32,6 +32,20 @@ interface KeycloakUserInfo {
   family_name?: string;
 }
 
+interface RegisterFormData {
+  email: string;
+  phone: string;
+  firstname: string;
+  lastname: string;
+}
+
+const defaultRegisterForm: RegisterFormData = {
+  email: '',
+  phone: '',
+  firstname: '',
+  lastname: '',
+};
+
 function App() {
   const { t, i18n } = useTranslation();
   const [authenticated, setAuthenticated] = useState(false);
@@ -49,6 +63,11 @@ function App() {
   const [refreshGatewayCounter, setRefreshGatewayCounter] = useState(0);
   const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
+  const [registerDialogOpen, setRegisterDialogOpen] = useState(false);
+  const [registerForm, setRegisterForm] = useState<RegisterFormData>(defaultRegisterForm);
+  const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
 
   // Callback for Gateway key creation
   const handleGatewayKeyCreated = useCallback(() => {
@@ -219,6 +238,83 @@ function App() {
     keycloak.login();
   };
 
+  const handleRegisterDialogOpen = () => {
+    setRegisterDialogOpen(true);
+    setRegisterError(null);
+    setRegisterSuccess(null);
+  };
+
+  const handleRegisterDialogClose = () => {
+    if (registerSubmitting) return;
+    setRegisterDialogOpen(false);
+  };
+
+  const handleRegisterFieldChange = (field: keyof RegisterFormData) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRegisterForm((prev) => ({
+      ...prev,
+      [field]: event.target.value,
+    }));
+  };
+
+  const handleRegisterSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (registerSubmitting) return;
+
+    const payload = {
+      email: registerForm.email.trim(),
+      phone: registerForm.phone.trim(),
+      firstname: registerForm.firstname.trim(),
+      lastname: registerForm.lastname.trim(),
+    };
+
+    if (!payload.email || !payload.phone || !payload.firstname || !payload.lastname) {
+      setRegisterError(t('login.registerValidationError', 'Vui lòng nhập đầy đủ thông tin đăng ký.'));
+      return;
+    }
+
+    setRegisterSubmitting(true);
+    setRegisterError(null);
+    setRegisterSuccess(null);
+
+    try {
+      const response = await fetch('/api/v1/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseData = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const errorDetail = typeof responseData?.detail === 'string'
+          ? responseData.detail
+          : t('login.registerErrorDefault', 'Đăng ký thất bại. Vui lòng thử lại.');
+        setRegisterError(errorDetail);
+        return;
+      }
+
+      const hasSub = typeof responseData?.sub === 'string' && responseData.sub.trim() !== '';
+      const vnpayId = typeof responseData?.vnpay_id === 'string' ? responseData.vnpay_id : '';
+
+      setRegisterSuccess(
+        hasSub
+          ? t('login.registerSuccessActive', 'Đăng ký thành công. Bạn có thể đăng nhập ngay.')
+          : t('login.registerSuccessProvisional', {
+              defaultValue: 'Đăng ký thành công (provisional). Vui lòng đăng nhập để hoàn tất liên kết tài khoản.',
+              vnpayId,
+            }),
+      );
+      setRegisterForm(defaultRegisterForm);
+    } catch (error) {
+      console.error('Register request failed:', error);
+      setRegisterError(t('login.registerNetworkError', 'Không thể kết nối hệ thống đăng ký. Vui lòng thử lại.'));
+    } finally {
+      setRegisterSubmitting(false);
+    }
+  };
+
   // Helper to get display email
   const getUserEmail = (): string => {
     return userInfo?.email || userInfo?.preferred_username || keycloak.tokenParsed?.email || '';
@@ -261,7 +357,7 @@ function App() {
                 {t('appTitle')}
               </Typography>
             </Box>
-            <Box sx={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>
+            <Box sx={{ maxWidth: '420px', width: '100%', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Button
                 variant="contained"
                 size="large"
@@ -275,6 +371,20 @@ function App() {
                 }}
               >
                 {t('login.signInWithIDSafe', 'Đăng nhập với IDSafe')}
+              </Button>
+              <Button
+                variant="outlined"
+                size="large"
+                onClick={handleRegisterDialogOpen}
+                sx={{
+                  py: 1.5,
+                  px: 6,
+                  fontSize: '1.05rem',
+                  borderRadius: '8px',
+                  textTransform: 'none',
+                }}
+              >
+                {t('login.registerWithGateway', 'Đăng ký tài khoản mới')}
               </Button>
             </Box>
           </Box>
@@ -554,6 +664,92 @@ function App() {
           </Button>
           <Button onClick={handleLogout} color="primary" autoFocus>
             {t('logout.confirm', 'Đăng xuất')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={registerDialogOpen}
+        onClose={handleRegisterDialogClose}
+        fullWidth
+        maxWidth="sm"
+        aria-labelledby="register-dialog-title"
+      >
+        <DialogTitle id="register-dialog-title">
+          {t('login.registerDialogTitle', 'Đăng ký tài khoản Hyper AI Gateway')}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            {t(
+              'login.registerDialogDescription',
+              'Điền thông tin bên dưới để tạo tài khoản trên IDSafe thông qua Hyper AI Gateway.',
+            )}
+          </DialogContentText>
+
+          {registerError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {registerError}
+            </Alert>
+          )}
+
+          {registerSuccess && (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              {registerSuccess}
+            </Alert>
+          )}
+
+          <Box component="form" id="register-form" onSubmit={handleRegisterSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <TextField
+              required
+              type="email"
+              label={t('login.registerEmailLabel', 'Email')}
+              value={registerForm.email}
+              onChange={handleRegisterFieldChange('email')}
+              disabled={registerSubmitting}
+              fullWidth
+            />
+            <TextField
+              required
+              label={t('login.registerPhoneLabel', 'Số điện thoại')}
+              value={registerForm.phone}
+              onChange={handleRegisterFieldChange('phone')}
+              disabled={registerSubmitting}
+              fullWidth
+            />
+            <TextField
+              required
+              label={t('login.registerFirstNameLabel', 'Tên')}
+              value={registerForm.firstname}
+              onChange={handleRegisterFieldChange('firstname')}
+              disabled={registerSubmitting}
+              fullWidth
+            />
+            <TextField
+              required
+              label={t('login.registerLastNameLabel', 'Họ')}
+              value={registerForm.lastname}
+              onChange={handleRegisterFieldChange('lastname')}
+              disabled={registerSubmitting}
+              fullWidth
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleRegisterDialogClose} disabled={registerSubmitting}>
+            {t('action.cancel', 'Hủy')}
+          </Button>
+          <Button
+            type="submit"
+            form="register-form"
+            variant="contained"
+            disabled={registerSubmitting}
+          >
+            {registerSubmitting
+              ? t('login.registerSubmitting', 'Đang đăng ký...')
+              : t('login.registerSubmitButton', 'Đăng ký')}
+          </Button>
+          <Button onClick={handleLogin} disabled={registerSubmitting}>
+            {t('login.signInWithIDSafe', 'Đăng nhập với IDSafe')}
           </Button>
         </DialogActions>
       </Dialog>

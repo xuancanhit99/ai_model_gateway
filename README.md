@@ -86,6 +86,12 @@ APP_DESCRIPTION='Gateway service for multiple AI models'
 # API settings
 API_V1_STR=/api/v1
 
+# PostgreSQL settings
+DATABASE_URL=postgresql://ai_gateway:***@postgres:5432/ai_gateway
+DB_POOL_MIN_SIZE=1
+DB_POOL_MAX_SIZE=10
+APP_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
+
 # Gemini Settings
 GOOGLE_AI_STUDIO_API_KEY=your_google_api_key
 GEMINI_VISION_MODEL_NAME=gemini-2.0-flash
@@ -103,6 +109,20 @@ GIGACHAT_SCOPE=GIGACHAT_API_PERS
 GIGACHAT_TOKEN_URL=https://ngw.devices.sberbank.ru:9443/api/v2/oauth
 GIGACHAT_CHAT_URL=https://gigachat.devices.sberbank.ru/api/v1/chat/completions
 GIGACHAT_DEFAULT_MODEL=GigaChat-Pro
+
+# Perplexity Settings
+PERPLEXITY_API_KEY=your_perplexity_api_key
+PERPLEXITY_API_BASE_URL=https://api.perplexity.ai
+SONAR_DEFAULT_MODEL=sonar
+
+# IDSafe settings
+IDSAFE_ISSUER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat
+IDSAFE_REGISTER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register
+IDSAFE_SERVICE_CLIENT_ID=hyper-ai-gateway-service
+IDSAFE_SERVICE_CLIENT_SECRET=***
+IDSAFE_VERIFY_AUD=false
+IDSAFE_EXPECTED_AUDIENCE=hyper-ai-gateway-service
+IDSAFE_EXPECTED_AZP=hyper-ai-gateway
 ```
 
 ## 📚 API Documentation
@@ -124,6 +144,7 @@ The service provides the following main endpoints:
 - **OpenAI-Compatible Models List**: `/v1/models`
 - **Provider Key Management**: `/api/v1/provider-keys`
 - **Activity Logs**: `/api/v1/activity-logs`
+- **IDSafe Registration Proxy**: `/api/v1/auth/register`
 
 ## 🤖 Available Models
 

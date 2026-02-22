@@ -1,7 +1,7 @@
 # app/core/log_utils.py
 import logging
 from typing import Optional
-from supabase import Client # Import Supabase Client
+from app.core.db import PostgresCompatClient as Client # Import Supabase Client
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)

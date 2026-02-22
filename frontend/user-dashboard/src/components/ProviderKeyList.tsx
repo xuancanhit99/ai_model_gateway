@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { supabase } from '../supabaseClient';
 import { getAccessToken } from '../authHelper';
 import toast from 'react-hot-toast';
 import {
@@ -205,27 +204,6 @@ const ProviderKeyList: React.FC = () => {
     fetchProviderKeys();
     fetchProviderKeyLogs(); // Fetch logs ban đầu khi component mount
   }, []);
-
-  // Effect để thiết lập và dọn dẹp Realtime subscription cho logs
-  useEffect(() => {
-    /* 
-    // Tạm thời vô hiệu hoá Realtime Subscription của Supabase.
-    // Vì hiện tại Frontend đang dùng Keycloak JWT để xác thực (thông qua Backend),
-    // việc kết nối trực tiếp từ Frontend lên Supabase Realtime bằng Anon Key 
-    // sẽ bị từ chối truy cập (401/WebSocket Error).
-    if (!supabase) return;
-
-    let realtimeChannel: RealtimeChannel | null = null;
-    const setupSubscription = async () => { ... }
-    setupSubscription();
-
-    return () => {
-      if (realtimeChannel && supabase) {
-        supabase.removeChannel(realtimeChannel);
-      }
-    };
-    */
-  }, [supabase]); // Chỉ chạy lại nếu instance supabase thay đổi (thường là không)
 
   // --- Key Handlers ---
   const handleSelectKey = async (keyId: string, providerName: string, currentIsSelected: boolean) => {

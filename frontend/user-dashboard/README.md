@@ -1,5 +1,19 @@
 # React + TypeScript + Vite
 
+## Environment
+
+Copy `.env.example` to `.env` before running local dev/build:
+
+```bash
+cp .env.example .env
+```
+
+Required variables:
+
+- `VITE_IDSAFE_URL`
+- `VITE_IDSAFE_REALM`
+- `VITE_IDSAFE_CLIENT_ID`
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

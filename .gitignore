@@ -1,4 +1,7 @@
 .env
+ops/.env
+.env.backup*
+ops/.env.backup*
 __pycache__/
 *.pyc
 .idea/

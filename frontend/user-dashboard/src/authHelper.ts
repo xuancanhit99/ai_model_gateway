@@ -1,8 +1,7 @@
 /**
  * Auth helper — centralized access token retrieval from Keycloak.
  * 
- * All components should use `getAccessToken()` instead of 
- * `supabase.auth.getSession()` for getting Bearer tokens.
+ * All components should use `getAccessToken()` for getting Bearer tokens.
  */
 import keycloak from './keycloakClient';
 

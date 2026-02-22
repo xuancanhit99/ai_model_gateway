@@ -86,6 +86,12 @@ APP_DESCRIPTION='Gateway service for multiple AI models'
 # Cài đặt API
 API_V1_STR=/api/v1
 
+# Cài đặt PostgreSQL
+DATABASE_URL=postgresql://ai_gateway:***@postgres:5432/ai_gateway
+DB_POOL_MIN_SIZE=1
+DB_POOL_MAX_SIZE=10
+APP_ENCRYPTION_KEY=<base64-key-32-byte>
+
 # Cài đặt Gemini
 GOOGLE_AI_STUDIO_API_KEY=your_google_api_key
 GEMINI_VISION_MODEL_NAME=gemini-2.0-flash
@@ -108,6 +114,15 @@ GIGACHAT_DEFAULT_MODEL=GigaChat-Pro
 PERPLEXITY_API_KEY=your_perplexity_api_key
 PERPLEXITY_API_BASE_URL=https://api.perplexity.ai
 SONAR_DEFAULT_MODEL=sonar
+
+# Cài đặt IDSafe
+IDSAFE_ISSUER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat
+IDSAFE_REGISTER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register
+IDSAFE_SERVICE_CLIENT_ID=hyper-ai-gateway-service
+IDSAFE_SERVICE_CLIENT_SECRET=***
+IDSAFE_VERIFY_AUD=false
+IDSAFE_EXPECTED_AUDIENCE=hyper-ai-gateway-service
+IDSAFE_EXPECTED_AZP=hyper-ai-gateway
 ```
 
 ## 📚 Tài liệu API
@@ -129,6 +144,7 @@ Dịch vụ cung cấp các endpoint chính sau:
 - **Danh sách mô hình tương thích OpenAI**: `/v1/models`
 - **Quản lý Khóa Nhà cung cấp**: `/api/v1/provider-keys`
 - **Nhật ký Hoạt động**: `/api/v1/activity-logs`
+- **Proxy đăng ký IDSafe**: `/api/v1/auth/register`
 
 ## 🤖 Các mô hình có sẵn
 

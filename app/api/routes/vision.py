@@ -1,12 +1,12 @@
 # app/api/routes/vision.py
 from fastapi import APIRouter, File, UploadFile, HTTPException, status, Header, Form, Depends
 from typing import Optional, Dict, Any
-from supabase import Client # Đảm bảo Client được import
+from app.core.db import PostgresCompatClient as Client # Đảm bảo Client được import
 from app.models.schemas import VisionResponse, ErrorResponse
 from app.services.model_router import ModelRouter
 from app.core.auth import verify_api_key_with_provider_keys  # Sử dụng phiên bản nâng cao
 from app.core.config import get_settings
-from app.core.supabase_client import get_supabase_client # Đảm bảo get_supabase_client được import
+from app.core.db import get_db_client # PostgreSQL DB dependency
 
 router = APIRouter()
 settings = get_settings()
@@ -32,7 +32,7 @@ async def extract_text_from_image(
         x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
         x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
         auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys),
-        supabase: Client = Depends(get_supabase_client) # Thêm dependency injection cho supabase
+        supabase: Client = Depends(get_db_client) # Thêm dependency injection cho supabase
     ):
     """
     Receives an image file and routes the text extraction request

@@ -1,0 +1,13 @@
+interface:
+  display_name: "Deploy Compose + Playwright"
+  short_description: "Deploy ai_model_gateway and verify with smoke/UI checks"
+  default_prompt: "Use $deploy-compose-playwright to deploy the current ai_model_gateway build to server, run smoke checks, then verify core UI flows with Playwright."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "playwright"
+      description: "Browser automation for post-deploy UI testing"
+
+policy:
+  allow_implicit_invocation: true

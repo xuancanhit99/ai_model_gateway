@@ -1,11 +1,11 @@
 # app/api/routes/chat.py
 from fastapi import APIRouter, HTTPException, status, Header, Depends
-from supabase import Client # Thêm import Client
+from app.core.db import PostgresCompatClient as Client # Thêm import Client
 from app.models.schemas import ChatRequest, ChatResponse, ErrorResponse
 from app.services.model_router import ModelRouter
 from app.core.config import get_settings
 from app.core.auth import verify_api_key_with_provider_keys # Sử dụng phiên bản nâng cao
-from app.core.supabase_client import get_supabase_client # Thêm import get_supabase_client
+from app.core.db import get_db_client # PostgreSQL DB dependency
 from typing import Dict, Any
 
 router = APIRouter()
@@ -28,7 +28,7 @@ async def generate_chat_response(
     x_gigachat_api_key: str | None = Header(None, alias="X-GigaChat-API-Key"),
     x_perplexity_api_key: str | None = Header(None, alias="X-Perplexity-API-Key"),
     auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys),
-    supabase: Client = Depends(get_supabase_client) # Thêm dependency injection cho supabase
+    supabase: Client = Depends(get_db_client) # Thêm dependency injection cho supabase
 ):
     """
     Receives a user message and optional chat history, then returns
