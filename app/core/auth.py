@@ -1,238 +1,578 @@
-# app/core/auth.py
+import base64
+import bcrypt
+import logging
 import secrets
 import string
-import bcrypt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordBearer
-from typing import Dict, Any, Tuple, Optional
-import logging
-from datetime import datetime, timedelta, timezone
-import jwt as pyjwt  # PyJWT for RS256 JWKS verification
-from jwt import PyJWKClient, PyJWKClientError
-from pydantic import BaseModel, Field
-from cryptography.fernet import Fernet
-from cachetools import TTLCache
 import threading
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Tuple
 
-from .config import get_settings
+import httpx
+import jwt as pyjwt
+from cryptography.fernet import Fernet
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt import PyJWKClient, PyJWKClientError
+from pydantic import BaseModel
 
-from .supabase_client import get_supabase_client
-from supabase import Client
+from app.core.config import get_settings
+from app.core.db import PostgresCompatClient as Client
+from app.core.db import get_db_client
 
 logger = logging.getLogger(__name__)
 
-# --- Constants ---
-ALGORITHM = "RS256"  # Keycloak uses RS256 for JWT signing
+ALGORITHM = "RS256"
 
-# --- JWKS Client Cache ---
-# Cache the PyJWKClient instance per issuer URL (reusable, thread-safe)
 _jwks_clients: Dict[str, PyJWKClient] = {}
 _jwks_lock = threading.Lock()
+_idsafe_service_token_cache: Dict[str, Dict[str, Any]] = {}
+_idsafe_service_token_lock = threading.Lock()
+
+api_key_scheme = HTTPBearer(description="API Key authentication using 'hp_' prefixed keys.")
+jwt_scheme = HTTPBearer(description="User authentication using JWT obtained from IDSafe (Keycloak OIDC).")
+
+API_KEY_PREFIX = "hp_"
+API_KEY_SECRET_LENGTH = 32
+API_KEY_PREFIX_LOOKUP_LENGTH = 6
+
+
+class TokenData(BaseModel):
+    sub: Optional[str] = None
+    exp: Optional[int] = None
 
 
 def _get_jwks_client(issuer_url: str) -> PyJWKClient:
-    """Get or create a cached PyJWKClient for the given issuer URL."""
     if issuer_url not in _jwks_clients:
         with _jwks_lock:
             if issuer_url not in _jwks_clients:
                 jwks_url = f"{issuer_url}/protocol/openid-connect/certs"
-                _jwks_clients[issuer_url] = PyJWKClient(
-                    jwks_url,
-                    cache_keys=True,
-                    lifespan=3600,  # Cache keys for 1 hour
-                )
-                logger.info(f"Created JWKS client for: {jwks_url}")
+                _jwks_clients[issuer_url] = PyJWKClient(jwks_url, cache_keys=True, lifespan=3600)
+                logger.info("Created JWKS client for: %s", jwks_url)
     return _jwks_clients[issuer_url]
 
 
-# --- Security Schemes ---
-# For API Key authentication (hp_...)
-api_key_scheme = HTTPBearer(description="API Key authentication using 'hp_' prefixed keys.")
-# For User JWT authentication (from IDSafe/Keycloak)
-jwt_scheme = HTTPBearer(description="User authentication using JWT obtained from IDSafe (Keycloak OIDC).")
+def _resolve_idsafe_token_url(settings: Any) -> str:
+    if settings.IDSAFE_TOKEN_URL:
+        return settings.IDSAFE_TOKEN_URL.rstrip("/")
+
+    issuer_url = settings.IDSAFE_ISSUER_URL
+    if not issuer_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Lỗi cấu hình xác thực phía máy chủ (missing IDSAFE_ISSUER_URL).",
+        )
+    return f"{issuer_url.rstrip('/')}/protocol/openid-connect/token"
 
 
-# --- Pydantic Models ---
-class TokenData(BaseModel):
-    """Pydantic model for JWT payload data (relevant fields)."""
-    sub: Optional[str] = None # Subject (usually the user ID in Supabase JWT)
-    exp: Optional[int] = None # Expiration time
+def _normalize_audience_claim(aud_claim: Any) -> set[str]:
+    if isinstance(aud_claim, str):
+        return {aud_claim}
+    if isinstance(aud_claim, list):
+        return {item for item in aud_claim if isinstance(item, str)}
+    return set()
 
 
-# --- API Key Constants ---
-API_KEY_PREFIX = "hp_"
-API_KEY_SECRET_LENGTH = 32 # Độ dài phần bí mật của key
-API_KEY_PREFIX_LOOKUP_LENGTH = 6 # Số ký tự đầu của secret dùng để tra cứu nhanh
+def _normalize_email(email: Optional[str]) -> Optional[str]:
+    if not email:
+        return None
+    normalized = email.strip().lower()
+    return normalized or None
 
-# --- Helper Functions for Key Generation ---
+
+def _claim_value(payload: Dict[str, Any], key: str) -> Optional[str]:
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    attrs = payload.get("attributes")
+    if isinstance(attrs, dict):
+        attr_val = attrs.get(key)
+        if isinstance(attr_val, list) and attr_val:
+            first = attr_val[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()
+        if isinstance(attr_val, str) and attr_val.strip():
+            return attr_val.strip()
+    return None
+
+
+def _extract_email(payload: Dict[str, Any]) -> Optional[str]:
+    email = _claim_value(payload, "email")
+    if email:
+        return email
+
+    preferred_username = payload.get("preferred_username")
+    if isinstance(preferred_username, str) and "@" in preferred_username:
+        return preferred_username.strip()
+    return None
+
+
+def _extract_vnpay_id(payload: Dict[str, Any]) -> Optional[str]:
+    candidate_keys = [
+        "vnpay_id",
+        "vnpayId",
+        "vnpayid",
+        "taxIdUsername",
+        "tax_id_username",
+    ]
+    for key in candidate_keys:
+        value = _claim_value(payload, key)
+        if value:
+            return value
+    return None
+
+
+def _record_gateway_conflict(
+    db: Client,
+    conflict_type: str,
+    idsafe_sub: Optional[str],
+    email_norm: Optional[str],
+    matched_subs: Optional[list[str]],
+    details: Optional[str] = None,
+) -> None:
+    try:
+        db.execute(
+            """
+            INSERT INTO gateway_user_conflicts (conflict_type, idsafe_sub, email_norm, matched_subs, details, created_at)
+            VALUES (%s, %s, %s, %s, %s, now())
+            """,
+            (
+                conflict_type,
+                idsafe_sub,
+                email_norm,
+                matched_subs or [],
+                details,
+            ),
+        )
+    except Exception as err:
+        logger.warning("Unable to record gateway_user_conflicts: %s", err)
+
+
+def _upsert_gateway_user_by_sub(
+    db: Client,
+    idsafe_sub: str,
+    email: Optional[str],
+    email_norm: Optional[str],
+    vnpay_id: Optional[str],
+) -> Dict[str, Any]:
+    try:
+        rows = db.execute_returning(
+            """
+            INSERT INTO gateway_users (idsafe_sub, email, email_norm, vnpay_id, status, created_at, updated_at, last_login_at)
+            VALUES (%s, %s, %s, %s, 'active', now(), now(), now())
+            ON CONFLICT (idsafe_sub)
+            DO UPDATE SET
+                email = COALESCE(EXCLUDED.email, gateway_users.email),
+                email_norm = COALESCE(EXCLUDED.email_norm, gateway_users.email_norm),
+                vnpay_id = COALESCE(EXCLUDED.vnpay_id, gateway_users.vnpay_id),
+                status = 'active',
+                updated_at = now(),
+                last_login_at = now()
+            RETURNING gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status
+            """,
+            (idsafe_sub, email, email_norm, vnpay_id),
+        )
+        return rows[0]
+    except Exception as err:
+        # Common case: vnpay_id unique conflict with another row.
+        logger.warning("gateway_users upsert conflict for sub=%s vnpay_id=%s: %s", idsafe_sub, vnpay_id, err)
+        _record_gateway_conflict(
+            db,
+            conflict_type="UPSERT_CONFLICT",
+            idsafe_sub=idsafe_sub,
+            email_norm=email_norm,
+            matched_subs=None,
+            details=str(err),
+        )
+        rows = db.execute_returning(
+            """
+            INSERT INTO gateway_users (idsafe_sub, email, email_norm, status, created_at, updated_at, last_login_at)
+            VALUES (%s, %s, %s, 'active', now(), now(), now())
+            ON CONFLICT (idsafe_sub)
+            DO UPDATE SET
+                email = COALESCE(EXCLUDED.email, gateway_users.email),
+                email_norm = COALESCE(EXCLUDED.email_norm, gateway_users.email_norm),
+                status = 'active',
+                updated_at = now(),
+                last_login_at = now()
+            RETURNING gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status
+            """,
+            (idsafe_sub, email, email_norm),
+        )
+        return rows[0]
+
+
+def _upsert_gateway_user_provisional(
+    db: Client,
+    email: Optional[str],
+    email_norm: Optional[str],
+    vnpay_id: str,
+) -> Dict[str, Any]:
+    rows = db.execute_returning(
+        """
+        INSERT INTO gateway_users (idsafe_sub, email, email_norm, vnpay_id, status, created_at, updated_at, last_login_at)
+        VALUES (NULL, %s, %s, %s, 'provisional', now(), now(), NULL)
+        ON CONFLICT (vnpay_id)
+        DO UPDATE SET
+            email = COALESCE(EXCLUDED.email, gateway_users.email),
+            email_norm = COALESCE(EXCLUDED.email_norm, gateway_users.email_norm),
+            status = CASE
+                WHEN gateway_users.idsafe_sub IS NULL THEN 'provisional'
+                ELSE 'active'
+            END,
+            updated_at = now()
+        RETURNING gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status
+        """,
+        (email, email_norm, vnpay_id),
+    )
+    return rows[0]
+
+
+def _attach_sub_to_gateway_user(
+    db: Client,
+    gateway_user_id: Any,
+    idsafe_sub: str,
+    email: Optional[str],
+    email_norm: Optional[str],
+    vnpay_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    rows = db.execute_returning(
+        """
+        UPDATE gateway_users
+        SET idsafe_sub = %s,
+            email = COALESCE(%s, email),
+            email_norm = COALESCE(%s, email_norm),
+            vnpay_id = COALESCE(%s, vnpay_id),
+            status = 'active',
+            updated_at = now(),
+            last_login_at = now()
+        WHERE gateway_user_id = %s
+        RETURNING gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status
+        """,
+        (idsafe_sub, email, email_norm, vnpay_id, gateway_user_id),
+    )
+    return rows[0] if rows else None
+
+
+async def sync_or_reconcile_gateway_user(payload: Dict[str, Any], db: Client) -> Dict[str, Any]:
+    raw_sub = payload.get("sub")
+    idsafe_sub = raw_sub.strip() if isinstance(raw_sub, str) and raw_sub.strip() else None
+
+    email = _extract_email(payload)
+    email_norm = _normalize_email(email)
+    vnpay_id = _extract_vnpay_id(payload)
+
+    if not idsafe_sub and not vnpay_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Không tìm thấy định danh user từ IDSafe (thiếu cả sub và vnpayId).",
+        )
+
+    if idsafe_sub:
+        existing_by_sub = db.fetch_one(
+            "SELECT gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status FROM gateway_users WHERE idsafe_sub = %s",
+            (idsafe_sub,),
+        )
+        if existing_by_sub:
+            return _upsert_gateway_user_by_sub(db, idsafe_sub, email, email_norm, vnpay_id)
+
+        if vnpay_id:
+            existing_by_vnpay = db.fetch_one(
+                "SELECT gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status FROM gateway_users WHERE vnpay_id = %s",
+                (vnpay_id,),
+            )
+            if existing_by_vnpay:
+                existing_sub = existing_by_vnpay.get("idsafe_sub")
+                if existing_sub and existing_sub != idsafe_sub:
+                    _record_gateway_conflict(
+                        db,
+                        conflict_type="SUB_VNPAY_MISMATCH",
+                        idsafe_sub=idsafe_sub,
+                        email_norm=email_norm,
+                        matched_subs=[existing_sub],
+                        details=f"vnpay_id {vnpay_id} is already linked to another sub.",
+                    )
+                    return _upsert_gateway_user_by_sub(db, idsafe_sub, email, email_norm, None)
+
+                attached = _attach_sub_to_gateway_user(
+                    db,
+                    existing_by_vnpay["gateway_user_id"],
+                    idsafe_sub,
+                    email,
+                    email_norm,
+                    vnpay_id,
+                )
+                if attached:
+                    logger.info(
+                        "Attached idsafe_sub to provisional gateway user. gateway_user_id=%s sub=%s",
+                        existing_by_vnpay["gateway_user_id"],
+                        idsafe_sub,
+                    )
+                    return attached
+
+        if email_norm:
+            email_matches = db.fetch_all(
+                """
+                SELECT gateway_user_id, idsafe_sub
+                FROM gateway_users
+                WHERE email_norm = %s
+                ORDER BY created_at ASC
+                """,
+                (email_norm,),
+            )
+            if len(email_matches) == 1:
+                match = email_matches[0]
+                match_sub = match.get("idsafe_sub")
+                if match_sub and match_sub != idsafe_sub:
+                    _record_gateway_conflict(
+                        db,
+                        conflict_type="EMAIL_SUB_MISMATCH",
+                        idsafe_sub=idsafe_sub,
+                        email_norm=email_norm,
+                        matched_subs=[match_sub],
+                        details="Single email match belongs to another sub.",
+                    )
+                else:
+                    try:
+                        attached = _attach_sub_to_gateway_user(
+                            db,
+                            match["gateway_user_id"],
+                            idsafe_sub,
+                            email,
+                            email_norm,
+                            vnpay_id,
+                        )
+                        if attached:
+                            logger.info(
+                                "Auto-merged gateway user by email. gateway_user_id=%s sub=%s",
+                                match["gateway_user_id"],
+                                idsafe_sub,
+                            )
+                            return attached
+                    except Exception as err:
+                        logger.warning("Auto-merge by email failed sub=%s: %s", idsafe_sub, err)
+                        _record_gateway_conflict(
+                            db,
+                            conflict_type="AUTO_MERGE_FAILED",
+                            idsafe_sub=idsafe_sub,
+                            email_norm=email_norm,
+                            matched_subs=[match_sub] if match_sub else None,
+                            details=str(err),
+                        )
+
+            elif len(email_matches) > 1:
+                matched_subs = [row["idsafe_sub"] for row in email_matches if row.get("idsafe_sub")]
+                _record_gateway_conflict(
+                    db,
+                    conflict_type="MULTIPLE_EMAIL_MATCH",
+                    idsafe_sub=idsafe_sub,
+                    email_norm=email_norm,
+                    matched_subs=matched_subs or None,
+                    details="Multiple gateway_users rows match same email_norm.",
+                )
+
+        return _upsert_gateway_user_by_sub(db, idsafe_sub, email, email_norm, vnpay_id)
+
+    # Provisional register path: no sub yet, but we have vnpay_id.
+    assert vnpay_id is not None
+
+    existing_by_vnpay = db.fetch_one(
+        "SELECT gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status FROM gateway_users WHERE vnpay_id = %s",
+        (vnpay_id,),
+    )
+    if existing_by_vnpay:
+        rows = db.execute_returning(
+            """
+            UPDATE gateway_users
+            SET email = COALESCE(%s, email),
+                email_norm = COALESCE(%s, email_norm),
+                status = CASE
+                    WHEN idsafe_sub IS NULL THEN 'provisional'
+                    ELSE 'active'
+                END,
+                updated_at = now()
+            WHERE gateway_user_id = %s
+            RETURNING gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status
+            """,
+            (email, email_norm, existing_by_vnpay["gateway_user_id"]),
+        )
+        return rows[0]
+
+    if email_norm:
+        email_matches = db.fetch_all(
+            """
+            SELECT gateway_user_id, idsafe_sub
+            FROM gateway_users
+            WHERE email_norm = %s
+            ORDER BY created_at ASC
+            """,
+            (email_norm,),
+        )
+        if len(email_matches) == 1 and not email_matches[0].get("idsafe_sub"):
+            rows = db.execute_returning(
+                """
+                UPDATE gateway_users
+                SET email = COALESCE(%s, email),
+                    email_norm = COALESCE(%s, email_norm),
+                    vnpay_id = COALESCE(%s, vnpay_id),
+                    status = 'provisional',
+                    updated_at = now()
+                WHERE gateway_user_id = %s
+                RETURNING gateway_user_id, idsafe_sub, email, email_norm, vnpay_id, status
+                """,
+                (email, email_norm, vnpay_id, email_matches[0]["gateway_user_id"]),
+            )
+            if rows:
+                return rows[0]
+        elif len(email_matches) > 1:
+            matched_subs = [row["idsafe_sub"] for row in email_matches if row.get("idsafe_sub")]
+            _record_gateway_conflict(
+                db,
+                conflict_type="MULTIPLE_EMAIL_MATCH_PROVISIONAL",
+                idsafe_sub=None,
+                email_norm=email_norm,
+                matched_subs=matched_subs or None,
+                details="Multiple rows match provisional register email.",
+            )
+
+    return _upsert_gateway_user_provisional(db, email, email_norm, vnpay_id)
+
+
+async def get_idsafe_service_token(settings: Optional[Any] = None) -> str:
+    settings = settings or get_settings()
+    client_id = settings.IDSAFE_SERVICE_CLIENT_ID
+    client_secret = settings.IDSAFE_SERVICE_CLIENT_SECRET
+
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Thiếu cấu hình IDSafe service client (IDSAFE_SERVICE_CLIENT_ID/IDSAFE_SERVICE_CLIENT_SECRET).",
+        )
+
+    token_url = _resolve_idsafe_token_url(settings)
+    cache_key = f"{token_url}|{client_id}"
+    now_ts = int(time.time())
+
+    with _idsafe_service_token_lock:
+        cached = _idsafe_service_token_cache.get(cache_key)
+        if cached and int(cached.get("expires_at", 0)) - 30 > now_ts:
+            access_token = cached.get("access_token")
+            if isinstance(access_token, str) and access_token:
+                return access_token
+
+    token_payload = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(token_url, data=token_payload)
+            response.raise_for_status()
+
+        response_body = response.json()
+        access_token = response_body.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Không nhận được access token từ IDSafe.",
+            )
+
+        expires_in_raw = response_body.get("expires_in", 300)
+        try:
+            expires_in = max(int(expires_in_raw), 60)
+        except (TypeError, ValueError):
+            expires_in = 300
+
+        with _idsafe_service_token_lock:
+            _idsafe_service_token_cache[cache_key] = {
+                "access_token": access_token,
+                "expires_at": now_ts + expires_in,
+            }
+        return access_token
+
+    except httpx.HTTPStatusError as err:
+        logger.error("IDSafe token endpoint returned %s: %s", err.response.status_code, err.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="IDSafe từ chối cấp service token (client_credentials).",
+        )
+    except (httpx.RequestError, httpx.TimeoutException) as err:
+        logger.error("Cannot reach IDSafe token endpoint: %s", err)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể kết nối token endpoint của IDSafe.",
+        )
+
+
+async def get_idsafe_service_auth_header(settings: Optional[Any] = None) -> Dict[str, str]:
+    token = await get_idsafe_service_token(settings)
+    return {"Authorization": f"Bearer {token}"}
+
 
 def _generate_random_string(length: int) -> str:
-    """Tạo chuỗi ngẫu nhiên an toàn."""
     alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for i in range(length))
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
 
 def generate_api_key() -> Tuple[str, str, str]:
-    """
-    Tạo API key mới, prefix tra cứu và secret.
-    Returns:
-        Tuple[str, str, str]: (full_api_key, key_prefix_lookup, secret_part)
-        Ví dụ: ('hp_abcdef123...', 'abcdef', 'abcdef123...')
-    """
     secret_part = _generate_random_string(API_KEY_SECRET_LENGTH)
     full_api_key = f"{API_KEY_PREFIX}{secret_part}"
     key_prefix_lookup = secret_part[:API_KEY_PREFIX_LOOKUP_LENGTH]
-    return full_api_key, key_prefix_lookup, secret_part # Trả về secret để hash
+    return full_api_key, key_prefix_lookup, secret_part
+
 
 def hash_api_key(api_key: str) -> str:
-    """
-    Hash toàn bộ API key sử dụng bcrypt.
-    Args:
-        api_key (str): API key đầy đủ (ví dụ: 'hp_abcdef123...').
-    Returns:
-        str: Chuỗi hash bcrypt.
-    """
-    hashed_bytes = bcrypt.hashpw(api_key.encode('utf-8'), bcrypt.gensalt())
-    return hashed_bytes.decode('utf-8')
+    hashed_bytes = bcrypt.hashpw(api_key.encode("utf-8"), bcrypt.gensalt())
+    return hashed_bytes.decode("utf-8")
+
 
 def verify_hashed_key(api_key: str, hashed_key: str) -> bool:
-    """
-    Kiểm tra API key có khớp với hash đã lưu không.
-    Args:
-        api_key (str): API key đầy đủ người dùng cung cấp.
-        hashed_key (str): Hash lưu trong database.
-    Returns:
-        bool: True nếu khớp, False nếu không.
-    """
     try:
-        return bcrypt.checkpw(api_key.encode('utf-8'), hashed_key.encode('utf-8'))
-    except ValueError:
-        # Xử lý trường hợp hash không hợp lệ (ví dụ: sai định dạng)
-        logger.warning(f"Invalid hash format encountered for key starting with {api_key[:10]}...")
-        return False
-    except Exception as e:
-        logger.error(f"Error verifying password hash: {e}")
+        return bcrypt.checkpw(api_key.encode("utf-8"), hashed_key.encode("utf-8"))
+    except Exception:
         return False
 
-
-# --- Authentication Dependency ---
 
 async def verify_api_key(
-    credentials: HTTPAuthorizationCredentials = Depends(api_key_scheme), # Use api_key_scheme
-    supabase: Client = Depends(get_supabase_client)
+    credentials: HTTPAuthorizationCredentials = Depends(api_key_scheme),
+    db: Client = Depends(get_db_client),
 ) -> Dict[str, Any]:
-    """
-    Xác thực API key trong header Authorization sử dụng Supabase.
-
-    1. Kiểm tra scheme 'Bearer'.
-    2. Kiểm tra prefix 'hp_'.
-    3. Tách prefix tra cứu (6 ký tự đầu sau 'hp_').
-    4. Query Supabase để lấy các key có prefix trùng khớp.
-    5. So sánh hash của key đầy đủ với hash trong DB bằng bcrypt.
-    6. Trả về thông tin user nếu hợp lệ.
-    """
     if credentials.scheme != "Bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Không đúng kiểu xác thực. Sử dụng Bearer token."
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Không đúng kiểu xác thực. Sử dụng Bearer token.")
 
     api_key = credentials.credentials
     if not api_key.startswith(API_KEY_PREFIX):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"API key không hợp lệ. Phải bắt đầu bằng '{API_KEY_PREFIX}'."
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"API key không hợp lệ. Phải bắt đầu bằng '{API_KEY_PREFIX}'.")
 
     if len(api_key) != len(API_KEY_PREFIX) + API_KEY_SECRET_LENGTH:
-         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Định dạng API key không hợp lệ (sai độ dài)."
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Định dạng API key không hợp lệ (sai độ dài).")
 
     secret_part = api_key[len(API_KEY_PREFIX):]
     key_prefix_lookup = secret_part[:API_KEY_PREFIX_LOOKUP_LENGTH]
 
-    try:
-        # Query Supabase for potential matches based on the prefix lookup
-        response = supabase.table("api_keys") \
-                                 .select("user_id, key_hash, is_active") \
-                                 .eq("key_prefix", key_prefix_lookup) \
-                                 .execute()
+    response = db.table("api_keys").select("user_id, key_hash, is_active").eq("key_prefix", key_prefix_lookup).execute()
+    candidates = response.data or []
+    if not candidates:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key không hợp lệ hoặc không tồn tại.")
 
-        if not response.data:
-            logger.warning(f"No API key found for prefix lookup: {key_prefix_lookup}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="API key không hợp lệ hoặc không tồn tại."
-            )
+    for key_data in candidates:
+        if not key_data.get("is_active"):
+            continue
+        stored_hash = key_data.get("key_hash")
+        if stored_hash and verify_hashed_key(api_key, stored_hash):
+            return {"user_id": key_data["user_id"], "key_prefix": key_prefix_lookup}
 
-        # Iterate through potential matches and verify the full key hash
-        for key_data in response.data:
-            if not key_data.get('is_active', False):
-                logger.debug(f"Key with prefix {key_prefix_lookup} is inactive.")
-                continue # Bỏ qua key không hoạt động
-
-            stored_hash = key_data.get('key_hash')
-            if not stored_hash:
-                 logger.error(f"Missing key_hash for key with prefix {key_prefix_lookup}")
-                 continue # Bỏ qua nếu thiếu hash
-
-            if verify_hashed_key(api_key, stored_hash):
-                # Key hợp lệ và hoạt động
-                logger.info(f"API Key validated successfully for user_id: {key_data['user_id']}")
-                # Có thể cập nhật last_used_at ở đây (bất đồng bộ) nếu cần
-                # await update_last_used(supabase, key_prefix_lookup, api_key) # Ví dụ
-                return {"user_id": key_data['user_id'], "key_prefix": key_prefix_lookup}
-
-        # Nếu không có key nào khớp sau khi kiểm tra hash
-        logger.warning(f"API key provided failed hash verification for prefix lookup: {key_prefix_lookup}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key không hợp lệ."
-        )
-
-    except HTTPException as e:
-        # Re-raise HTTPExceptions để FastAPI xử lý
-        raise e
-    except Exception as e:
-        logger.exception(f"Lỗi trong quá trình xác thực API key: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Lỗi máy chủ nội bộ trong quá trình xác thực."
-        )
-
-# Hàm ví dụ để cập nhật last_used (chưa hoàn chỉnh, cần logic bất đồng bộ)
-# async def update_last_used(supabase: Client, key_prefix: str, full_key: str):
-#     try:
-#         # Cần tìm đúng key dựa trên hash đầy đủ hoặc ID duy nhất nếu có
-#         # Đây chỉ là ví dụ đơn giản, cần cẩn thận với race condition
-#         # và hiệu năng khi cập nhật thường xuyên.
-#         # Có thể cần một cột ID duy nhất cho mỗi key.
-#         from datetime import datetime, timezone
-#         await supabase.table("api_keys") \
-#                       .update({"last_used_at": datetime.now(timezone.utc).isoformat()}) \
-#                       .eq("key_prefix", key_prefix) \
-#                       .execute() # Cẩn thận: Điều này cập nhật tất cả key cùng prefix!
-#         logger.debug(f"Updated last_used_at for key prefix {key_prefix}")
-#     except Exception as e:
-#         logger.error(f"Failed to update last_used_at for key prefix {key_prefix}: {e}")
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key không hợp lệ.")
 
 
-# --- JWT Authentication Dependency (IDSafe / Keycloak OIDC) ---
-
-async def get_current_user(
+async def get_current_user_context(
     token: HTTPAuthorizationCredentials = Depends(jwt_scheme),
-    settings: Any = Depends(get_settings)
-) -> str:
-    """
-    Verify JWT from IDSafe (Keycloak) using JWKS public key verification (RS256).
-
-    The function fetches signing keys from the Keycloak JWKS endpoint,
-    verifies the token signature, and extracts the user ID from the 'sub' claim.
-
-    Returns:
-        str: User ID (UUID) from the token's 'sub' claim.
-    """
+    settings: Any = Depends(get_settings),
+    db: Client = Depends(get_db_client),
+) -> Dict[str, Any]:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Không thể xác thực thông tin đăng nhập",
@@ -240,181 +580,134 @@ async def get_current_user(
     )
 
     issuer_url = settings.IDSAFE_ISSUER_URL
-    client_id = settings.IDSAFE_CLIENT_ID
+    expected_audience = (settings.IDSAFE_EXPECTED_AUDIENCE or "").strip()
+    expected_azp = settings.IDSAFE_EXPECTED_AZP
+    verify_aud = bool(settings.IDSAFE_VERIFY_AUD)
 
     if not issuer_url:
-        logger.error("IDSAFE_ISSUER_URL is not configured. Cannot verify JWT.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Lỗi cấu hình xác thực phía máy chủ (missing IDSAFE_ISSUER_URL)."
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Lỗi cấu hình xác thực phía máy chủ (missing IDSAFE_ISSUER_URL).")
+    if not expected_azp:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Lỗi cấu hình xác thực phía máy chủ (missing IDSAFE_EXPECTED_AZP).")
+    if verify_aud and not expected_audience:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Lỗi cấu hình xác thực phía máy chủ (missing IDSAFE_EXPECTED_AUDIENCE).")
 
     if token.scheme != "Bearer":
-        logger.warning(f"Invalid token scheme received: {token.scheme}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Yêu cầu JWT Bearer token."
-        )
-
-    logger.debug(f"Attempting to decode JWT via JWKS: {token.credentials[:10]}...")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Yêu cầu JWT Bearer token.")
 
     try:
-        # Get JWKS client (cached)
         jwks_client = _get_jwks_client(issuer_url)
-
-        # Get the signing key from the JWT header's 'kid'
         signing_key = jwks_client.get_signing_key_from_jwt(token.credentials)
-
-        # Decode and verify the token
-        decode_options = {
-            "verify_exp": True,
-            "verify_aud": False,  # Keycloak public clients don't add their client_id to 'aud' by default
-        }
-
         payload = pyjwt.decode(
             token.credentials,
             signing_key.key,
             algorithms=[ALGORITHM],
             issuer=issuer_url,
-            options=decode_options,
+            options={"verify_exp": True, "verify_aud": False},
         )
-        logger.debug(f"JWT payload decoded successfully: sub={payload.get('sub')}")
 
-        user_id: Optional[str] = payload.get("sub")
-
-        if user_id is None:
-            logger.error("JWT payload missing 'sub' (user ID). Payload keys: %s", list(payload.keys()))
+        user_sub = payload.get("sub")
+        if not isinstance(user_sub, str) or not user_sub.strip():
             raise credentials_exception
 
-        logger.info(f"JWT validated successfully for user_id: {user_id}")
-        return user_id
+        if verify_aud:
+            aud_values = _normalize_audience_claim(payload.get("aud"))
+            if expected_audience not in aud_values:
+                raise credentials_exception
+
+        azp = payload.get("azp")
+        if azp != expected_azp:
+            raise credentials_exception
+
+        gateway_user = await sync_or_reconcile_gateway_user(payload, db)
+        gateway_sub = gateway_user.get("idsafe_sub")
+        if not isinstance(gateway_sub, str) or not gateway_sub.strip():
+            raise credentials_exception
+
+        return {
+            "user_id": gateway_sub,
+            "gateway_user_id": str(gateway_user.get("gateway_user_id")),
+            "idsafe_sub": gateway_sub,
+            "email": gateway_user.get("email"),
+            "vnpay_id": gateway_user.get("vnpay_id"),
+            "jwt_payload": payload,
+            "token": token.credentials,
+        }
 
     except pyjwt.ExpiredSignatureError:
-        logger.warning("JWT token has expired.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token đã hết hạn",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except pyjwt.InvalidAudienceError:
-        logger.warning("JWT audience mismatch.")
+    except (pyjwt.PyJWTError, PyJWKClientError):
         raise credentials_exception
-    except pyjwt.InvalidIssuerError:
-        logger.warning("JWT issuer mismatch.")
-        raise credentials_exception
-    except PyJWKClientError as e:
-        logger.error(f"JWKS client error (could not fetch keys): {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Không thể xác minh token — lỗi kết nối tới IDSafe."
-        )
-    except pyjwt.PyJWTError as e:
-        logger.error(f"JWT validation error: {e}", exc_info=True)
-        raise credentials_exception
-    except Exception as e:
-        logger.exception(f"Unexpected error during JWT validation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Lỗi máy chủ nội bộ trong quá trình xác thực JWT."
-        )
 
-# --- Provider Key Management ---
-import base64
 
-async def get_user_provider_keys(supabase: Client, user_id: str) -> Dict[str, str]:
-    """
-    Retrieve decrypted provider keys that have been selected for a user.
-    
-    Args:
-        supabase: Supabase client
-        user_id: User ID from auth
-        
-    Returns:
-        Dict with provider names as keys and decrypted API keys as values
-    """
+async def get_current_user(context: Dict[str, Any] = Depends(get_current_user_context)) -> str:
+    return str(context["user_id"])
+
+
+async def get_user_provider_keys(db: Client, user_id: str) -> Dict[str, str]:
     try:
-        # Query for selected keys (is_selected=true) for this user
-        response = supabase.table("user_provider_keys").select(
-            "provider_name", "api_key_encrypted"
-        ).eq("user_id", user_id).eq("is_selected", True).execute()
-        
-        if not response.data:
-            logger.debug(f"No selected provider keys found for user {user_id}")
+        response = db.table("user_provider_keys").select("provider_name, api_key_encrypted").eq("user_id", user_id).eq("is_selected", True).execute()
+        rows = response.data or []
+        if not rows:
             return {}
-            
-        # Decrypt each key
-        result = {}
-        for item in response.data:
+
+        result: Dict[str, str] = {}
+        for item in rows:
             provider = item.get("provider_name")
             encrypted_key = item.get("api_key_encrypted")
-            
             if not provider or not encrypted_key:
                 continue
-                
             try:
-                # Get encryption key
                 key = get_encryption_key()
                 f = Fernet(base64.urlsafe_b64encode(key))
-                decrypted_key = f.decrypt(encrypted_key.encode()).decode()
-                result[provider] = decrypted_key
-            except Exception as e:
-                logger.error(f"Error decrypting key for provider {provider}: {e}")
-                # Skip this key if decryption fails
-                continue
-                
+                result[provider] = f.decrypt(encrypted_key.encode()).decode()
+            except Exception:
+                logger.exception("Error decrypting provider key for provider=%s", provider)
         return result
-        
-    except Exception as e:
-        logger.error(f"Error retrieving provider keys for user {user_id}: {e}")
-        return {}  # Return empty dict on error to avoid breaking the API
+    except Exception:
+        logger.exception("Error retrieving provider keys for user=%s", user_id)
+        return {}
+
 
 def get_encryption_key() -> bytes:
-    """Get encryption key from settings or generate one"""
-    # In production, you should store this key securely and persistently
-    # For now, we'll use a derived key from SUPABASE_SERVICE_ROLE_KEY for simplicity
-    from app.core.config import get_settings
     settings = get_settings()
-    
-    # WARNING: In a real production environment, you would want a dedicated 
-    # encryption key that is properly managed and stored securely
-    if not settings.SUPABASE_SERVICE_ROLE_KEY:
-        raise ValueError("Server encryption configuration missing")
-    
-    # Derive a 32-byte key (suitable for Fernet)
-    # In production, use a proper key management solution
-    import hashlib
-    derived_key = hashlib.sha256(settings.SUPABASE_SERVICE_ROLE_KEY.encode()).digest()
-    return derived_key
+    raw = settings.APP_ENCRYPTION_KEY
+    if not raw:
+        raise ValueError("APP_ENCRYPTION_KEY is missing")
 
-# --- Enhanced API Key Dependency ---
+    # Preferred format: base64-url-safe encoded Fernet source (decodes to 32 bytes).
+    try:
+        decoded = base64.urlsafe_b64decode(raw.encode())
+        if len(decoded) == 32:
+            return decoded
+    except Exception:
+        pass
+
+    raw_bytes = raw.encode("utf-8")
+    if len(raw_bytes) == 32:
+        return raw_bytes
+
+    raise ValueError("APP_ENCRYPTION_KEY must decode to 32 bytes (or be a raw 32-byte string)")
+
 
 async def verify_api_key_with_provider_keys(
     credentials: HTTPAuthorizationCredentials = Depends(api_key_scheme),
-    supabase: Client = Depends(get_supabase_client)
+    db: Client = Depends(get_db_client),
 ) -> Dict[str, Any]:
-    """
-    Extended version of verify_api_key that also retrieves selected provider keys.
-    
-    Returns:
-        Dict containing user_id, key_prefix, provider_keys dictionary, and the original token.
-    """
-    # First verify the API key like normal
-    # verify_api_key returns {"user_id": ..., "key_prefix": ...}
-    auth_data = await verify_api_key(credentials, supabase)
+    auth_data = await verify_api_key(credentials, db)
     user_id = auth_data.get("user_id")
 
-    # Prepare the dictionary to return
     auth_info_to_return = {
         "user_id": user_id,
         "key_prefix": auth_data.get("key_prefix"),
         "provider_keys": {},
-        "token": credentials.credentials # Thêm token (API key gốc) vào đây
+        "token": credentials.credentials,
     }
 
-    # Then get any selected provider keys for this user
     if user_id:
-        provider_keys = await get_user_provider_keys(supabase, user_id)
-        auth_info_to_return["provider_keys"] = provider_keys
-    # else: provider_keys đã là {}
+        auth_info_to_return["provider_keys"] = await get_user_provider_keys(db, str(user_id))
 
     return auth_info_to_return

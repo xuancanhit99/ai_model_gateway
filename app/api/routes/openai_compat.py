@@ -2,8 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, status, Request
 from fastapi.responses import StreamingResponse
 from typing import Dict, Any, Optional, List
-from supabase import Client # Thêm import Supabase Client
-from app.core.supabase_client import get_supabase_client # Import dependency lấy Supabase client
+from app.core.db import PostgresCompatClient as Client # Thêm import Supabase Client
+from app.core.db import get_db_client # Import dependency lấy Supabase client
 from app.core.auth import verify_api_key_with_provider_keys  # Sử dụng phiên bản nâng cao
 from app.models.schemas import (
     ChatCompletionRequest,
@@ -34,7 +34,7 @@ router = APIRouter()
 async def create_chat_completion(
     request: Request,
     auth_info: Dict[str, Any] = Depends(verify_api_key_with_provider_keys),  # auth_info giờ chứa cả token
-    supabase: Client = Depends(get_supabase_client), # Inject Supabase client
+    supabase: Client = Depends(get_db_client), # Inject Supabase client
     x_google_api_key: Optional[str] = Header(None, alias="X-Google-API-Key"),
     x_xai_api_key: Optional[str] = Header(None, alias="X-xAI-API-Key"),
     x_gigachat_api_key: Optional[str] = Header(None, alias="X-GigaChat-API-Key"),
@@ -78,7 +78,7 @@ async def create_chat_completion(
         if google_key:
             provider_api_keys["google"] = google_key
         if grok_key:
-            provider_api_keys["grok"] = grok_key
+            provider_api_keys["xai"] = grok_key
         if gigachat_key:
             provider_api_keys["gigachat"] = gigachat_key
         if perplexity_key:

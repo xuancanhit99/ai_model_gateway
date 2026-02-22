@@ -4,7 +4,7 @@ import json
 import re
 from fastapi import HTTPException, status, UploadFile
 import mimetypes
-from supabase import Client # Thêm import Supabase Client
+from app.core.db import PostgresCompatClient as Client # Thêm import Supabase Client
 from app.services.gemini import GeminiService
 from app.services.grok import GrokService
 from app.services.gigachat import GigaChatService

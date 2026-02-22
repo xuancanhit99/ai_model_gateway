@@ -17,10 +17,14 @@ RUN npm install
 RUN chmod -R 755 /app/node_modules/.bin/
 COPY . .
 
-# Define ARGs for Supabase environment variables
-# These need to be available for the build command
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
+# Define ARGs for IDSafe environment variables
+ARG VITE_IDSAFE_URL
+ARG VITE_IDSAFE_REALM
+ARG VITE_IDSAFE_CLIENT_ID
+
+ENV VITE_IDSAFE_URL=${VITE_IDSAFE_URL}
+ENV VITE_IDSAFE_REALM=${VITE_IDSAFE_REALM}
+ENV VITE_IDSAFE_CLIENT_ID=${VITE_IDSAFE_CLIENT_ID}
 
 # Build the React app for production by directly invoking tsc and vite scripts with node
 # This bypasses potential issues with npx or script execution permissions

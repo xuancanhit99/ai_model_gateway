@@ -24,8 +24,8 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # Copy application files
 COPY ./app ./app
+COPY ./db ./db
 COPY main.py .
-COPY .env.example .env
 
 # Create non-root user
 RUN useradd -m appuser && \

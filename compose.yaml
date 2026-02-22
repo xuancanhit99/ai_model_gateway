@@ -1,6 +1,25 @@
 version: "3.8"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai_gateway_postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-ai_gateway}
+      - POSTGRES_USER=${POSTGRES_USER:-ai_gateway}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ai_gateway_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_gateway} -d ${POSTGRES_DB:-ai_gateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - ai_gateway_network
+
   ai_gateway_service:
     build:
       context: .
@@ -22,11 +41,14 @@ services:
           cpus: '0.5'
           memory: 512M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6161/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:6161/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs
@@ -41,8 +63,9 @@ services:
       context: ./frontend/user-dashboard
       dockerfile: Dockerfile
       args:
-        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
-        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+        - VITE_IDSAFE_URL=${VITE_IDSAFE_URL}
+        - VITE_IDSAFE_REALM=${VITE_IDSAFE_REALM}
+        - VITE_IDSAFE_CLIENT_ID=${VITE_IDSAFE_CLIENT_ID}
     container_name: ai_gateway_frontend
     ports:
       - "6060:80"
@@ -63,3 +86,6 @@ networks:
   proxy-network:
     external: true
     name: proxy-network
+
+volumes:
+  postgres_data:

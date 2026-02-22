@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { supabase } from '../supabaseClient';
 import { getAccessToken } from '../authHelper';
 import toast from 'react-hot-toast';
 import {
@@ -40,23 +39,29 @@ const ProviderKeyCreateForm: React.FC<ProviderKeyCreateFormProps> = ({ onSuccess
   // Hàm ghi nhật ký khi thêm mới Provider Key
   const addProviderKeyLog = async (responseData: any) => {
     try {
-      if (!supabase || !responseData.id || !responseData.provider_name) {
+      if (!responseData.id || !responseData.provider_name) {
         console.error('Cannot log provider key action: Missing data', responseData);
         return;
       }
 
-      // Ghi nhật ký vào bảng provider_key_logs
-      const { error } = await supabase
-        .from('provider_key_logs')
-        .insert({
+      const accessToken = await getAccessToken();
+      const response = await fetch('/api/v1/activity-logs/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
           action: 'ADD',
           provider_name: responseData.provider_name,
           key_id: responseData.id,
-          description: `Added new ${name ? `"${name}" ` : ''}key for ${providerDisplayNames[responseData.provider_name] || responseData.provider_name}`
-        });
+          description: `Added new ${name ? `"${name}" ` : ''}key for ${providerDisplayNames[responseData.provider_name] || responseData.provider_name}`,
+        }),
+      });
 
-      if (error) {
-        console.error('Error adding provider key log:', error);
+      if (!response.ok) {
+        const message = await response.text();
+        console.error('Error adding provider key log:', message);
       }
     } catch (error: any) {
       console.error('Error in addProviderKeyLog:', error);

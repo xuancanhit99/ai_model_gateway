@@ -3,7 +3,7 @@ import re
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
-from supabase import Client
+from app.core.db import PostgresCompatClient as Client
 from cryptography.fernet import Fernet # Cần để giải mã key mới
 import base64
 

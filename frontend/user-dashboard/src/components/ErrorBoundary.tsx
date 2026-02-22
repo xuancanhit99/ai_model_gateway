@@ -48,7 +48,7 @@ class ErrorBoundary extends Component<Props, State> {
               An unexpected error occurred in the application. Please try reloading the page.
             </Typography>
             {/* Optionally display error details for debugging (in development) */}
-            {process.env.NODE_ENV === 'development' && this.state.error && (
+            {import.meta.env.DEV && this.state.error && (
               <details style={{ whiteSpace: 'pre-wrap', marginTop: '10px' }}>
                 <summary>Error Details</summary>
                 {this.state.error.toString()}

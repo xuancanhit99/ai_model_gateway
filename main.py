@@ -1,8 +1,9 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import vision, health, chat, openai_compat, manage_keys, manage_provider_keys, activity_logs # Thêm activity_logs
+from app.api.routes import vision, health, chat, openai_compat, manage_keys, manage_provider_keys, activity_logs, auth # Thêm activity_logs
 from app.core.config import get_settings
+from app.core.db import close_db_pool, init_db_pool
 
 settings = get_settings()
 
@@ -12,13 +13,23 @@ app = FastAPI(
     version=settings.APP_VERSION,
 )
 
+
+@app.on_event("startup")
+async def startup_event():
+    init_db_pool()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    close_db_pool()
+
 # Cấu hình CORS
 origins = [
     "http://localhost",
     "http://localhost:5173",  # Local Vite dev server
     "http://localhost:6060",  # Local Nginx frontend
-    "https://ai-model-gateway.xuancanhit.io.vn",  # Production domain
-    "*",  # Cho phép tất cả origins trong môi trường phát triển
+    "https://gateway.vnpay.dev",
+    "https://gateway-api.vnpay.dev",
 ]
 
 app.add_middleware(
@@ -50,6 +61,9 @@ app.include_router(manage_provider_keys.router, tags=["Provider Key Management"]
 
 # Activity Log routes
 app.include_router(activity_logs.router, prefix=f"{settings.API_V1_STR}/activity-logs", tags=["Activity Logs"])
+
+# Auth routes
+app.include_router(auth.router, tags=["Auth"])
 
 @app.get("/")
 async def root():
