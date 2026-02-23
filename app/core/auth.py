@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse
 
 import httpx
 import jwt as pyjwt
@@ -71,6 +72,71 @@ def _normalize_audience_claim(aud_claim: Any) -> set[str]:
     if isinstance(aud_claim, list):
         return {item for item in aud_claim if isinstance(item, str)}
     return set()
+
+
+def _normalize_issuer_url(issuer_url: str) -> str:
+    return issuer_url.strip().rstrip("/")
+
+
+def _parse_issuer_parts(issuer_url: str) -> Optional[Tuple[str, str, str, str]]:
+    """
+    Parse issuer URL into (scheme, netloc, prefix_path, realm_name).
+
+    Supported shape:
+    - https://host[/optional-prefix][/u/<slot>]/realms/<realm>
+    """
+    normalized = _normalize_issuer_url(issuer_url)
+    parsed = urlparse(normalized)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+
+    path = parsed.path.rstrip("/")
+    marker = "/realms/"
+    idx = path.rfind(marker)
+    if idx < 0:
+        return None
+
+    prefix_path = path[:idx]
+    realm_name = path[idx + len(marker):]
+    if not realm_name or "/" in realm_name:
+        return None
+
+    return parsed.scheme, parsed.netloc, prefix_path, realm_name
+
+
+def _resolve_allowed_token_issuer(configured_issuer: str, token_issuer: Optional[str]) -> Optional[str]:
+    """
+    Accept token issuer in two forms:
+    - Exact configured issuer
+    - Slot-aware issuer: <configured-prefix>/u/<digits>/realms/<same-realm>
+    """
+    if not token_issuer:
+        return None
+
+    normalized_configured = _normalize_issuer_url(configured_issuer)
+    normalized_token = _normalize_issuer_url(token_issuer)
+    if normalized_token == normalized_configured:
+        return normalized_configured
+
+    configured_parts = _parse_issuer_parts(normalized_configured)
+    token_parts = _parse_issuer_parts(normalized_token)
+    if not configured_parts or not token_parts:
+        return None
+
+    cfg_scheme, cfg_netloc, cfg_prefix_path, cfg_realm = configured_parts
+    tok_scheme, tok_netloc, tok_prefix_path, tok_realm = token_parts
+    if tok_scheme != cfg_scheme or tok_netloc != cfg_netloc or tok_realm != cfg_realm:
+        return None
+
+    slot_prefix = f"{cfg_prefix_path}/u/"
+    if not tok_prefix_path.startswith(slot_prefix):
+        return None
+
+    slot_value = tok_prefix_path[len(slot_prefix):]
+    if not slot_value.isdigit():
+        return None
+
+    return normalized_token
 
 
 def _normalize_email(email: Optional[str]) -> Optional[str]:
@@ -595,13 +661,33 @@ async def get_current_user_context(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Yêu cầu JWT Bearer token.")
 
     try:
-        jwks_client = _get_jwks_client(issuer_url)
+        unverified_payload = pyjwt.decode(
+            token.credentials,
+            options={
+                "verify_signature": False,
+                "verify_exp": False,
+                "verify_aud": False,
+                "verify_iss": False,
+            },
+        )
+        token_issuer_claim = unverified_payload.get("iss")
+        token_issuer = token_issuer_claim if isinstance(token_issuer_claim, str) else None
+        accepted_issuer = _resolve_allowed_token_issuer(issuer_url, token_issuer)
+        if not accepted_issuer:
+            logger.warning(
+                "Rejected token issuer. configured=%s token_iss=%s",
+                _normalize_issuer_url(issuer_url),
+                token_issuer,
+            )
+            raise credentials_exception
+
+        jwks_client = _get_jwks_client(accepted_issuer)
         signing_key = jwks_client.get_signing_key_from_jwt(token.credentials)
         payload = pyjwt.decode(
             token.credentials,
             signing_key.key,
             algorithms=[ALGORITHM],
-            issuer=issuer_url,
+            issuer=accepted_issuer,
             options={"verify_exp": True, "verify_aud": False},
         )
 

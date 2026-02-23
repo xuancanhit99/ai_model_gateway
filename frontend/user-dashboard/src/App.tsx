@@ -10,11 +10,27 @@ import {
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import LogoutIcon from '@mui/icons-material/Logout';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import TranslateIcon from '@mui/icons-material/Translate';
 import KeyIcon from '@mui/icons-material/Key';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
+import {
+  buildRedirectUri,
+  clearLegacyKeycloakTokens,
+  clearStoredSessionLookup,
+  clearStoredSessionsForAuthuser,
+  consumeSkipRestoreOnce,
+  getStorageScope,
+  markSkipRestoreOnce,
+  patchPkceCallbackRedirectUri,
+  readAuthuserFromUrl,
+  rememberActiveAuthuser,
+  resolveCurrentAuthuser,
+  restoreStoredSessionForAuthuser,
+  saveStoredSession,
+} from './keycloakMultiAccount';
 import { getAppTheme } from './theme';
 import ErrorBoundary from './components/ErrorBoundary';
 import HyperLogo from './assets/Hyper.svg';
@@ -46,6 +62,16 @@ const defaultRegisterForm: RegisterFormData = {
   lastname: '',
 };
 
+let keycloakInitPromise: Promise<boolean> | null = null;
+
+const initKeycloakOnce = (options: Parameters<typeof keycloak.init>[0]): Promise<boolean> => {
+  if (!keycloakInitPromise) {
+    keycloakInitPromise = keycloak.init(options);
+  }
+
+  return keycloakInitPromise;
+};
+
 function App() {
   const { t, i18n } = useTranslation();
   const [authenticated, setAuthenticated] = useState(false);
@@ -68,6 +94,7 @@ function App() {
   const [registerSubmitting, setRegisterSubmitting] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
+  const storageScope = getStorageScope(keycloak.realm, keycloak.clientId);
 
   // Callback for Gateway key creation
   const handleGatewayKeyCreated = useCallback(() => {
@@ -92,24 +119,38 @@ function App() {
     setDrawerOpen(!isMobile);
   }, [isMobile]);
 
+  const clearTokens = useCallback(() => {
+    const authuser = resolveCurrentAuthuser(storageScope);
+    clearStoredSessionsForAuthuser(storageScope, authuser);
+    clearLegacyKeycloakTokens();
+    rememberActiveAuthuser(storageScope, authuser);
+  }, [storageScope]);
+
+  const saveTokens = useCallback(() => {
+    const authuser = resolveCurrentAuthuser(storageScope);
+    const sub = typeof keycloak.tokenParsed?.sub === 'string' ? keycloak.tokenParsed.sub : undefined;
+    rememberActiveAuthuser(storageScope, authuser);
+    saveStoredSession(storageScope, authuser, {
+      token: keycloak.token,
+      refreshToken: keycloak.refreshToken,
+      idToken: keycloak.idToken,
+      sub,
+    });
+    clearLegacyKeycloakTokens();
+  }, [storageScope]);
+
   // --- Keycloak Init ---
   useEffect(() => {
+    const callbackAuthuser = readAuthuserFromUrl() ?? resolveCurrentAuthuser(storageScope);
+    const initRedirectUri = buildRedirectUri(callbackAuthuser);
+    patchPkceCallbackRedirectUri(initRedirectUri);
+    rememberActiveAuthuser(storageScope, resolveCurrentAuthuser(storageScope));
+
     const initOptions = {
-      onLoad: 'check-sso' as const,
       pkceMethod: 'S256' as const,
       checkLoginIframe: false,
-    };
-
-    const clearTokens = () => {
-      localStorage.removeItem('kc_token');
-      localStorage.removeItem('kc_refreshToken');
-      localStorage.removeItem('kc_idToken');
-    };
-
-    const saveTokens = () => {
-      if (keycloak.token) localStorage.setItem('kc_token', keycloak.token);
-      if (keycloak.refreshToken) localStorage.setItem('kc_refreshToken', keycloak.refreshToken);
-      if (keycloak.idToken) localStorage.setItem('kc_idToken', keycloak.idToken);
+      responseMode: 'query' as const,
+      redirectUri: initRedirectUri,
     };
 
     const finishInit = (isAuthenticated: boolean) => {
@@ -124,29 +165,33 @@ function App() {
       }
     };
 
-    keycloak.init(initOptions).then((auth: boolean) => {
+    initKeycloakOnce(initOptions).then((auth: boolean) => {
       if (!auth) {
-        // Fallback: If check-sso fails (e.g., due to page reload without iframe),
-        // try to restore from localStorage using the refresh token.
-        const storedToken = localStorage.getItem('kc_token');
-        const storedRefresh = localStorage.getItem('kc_refreshToken');
+        if (consumeSkipRestoreOnce(storageScope)) {
+          finishInit(false);
+          return;
+        }
 
-        if (storedToken && storedRefresh) {
-          console.log('Restoring Keycloak session from localStorage...');
-          keycloak.token = storedToken;
-          keycloak.refreshToken = storedRefresh;
-          keycloak.idToken = localStorage.getItem('kc_idToken') || undefined;
+        const authuser = resolveCurrentAuthuser(storageScope);
+        const storedLookup = restoreStoredSessionForAuthuser(storageScope, authuser);
+        if (storedLookup?.session.refreshToken) {
+          console.log(`Restoring Keycloak session from localStorage for authuser=${storedLookup.session.authuser}`);
+          keycloak.token = storedLookup.session.token;
+          keycloak.refreshToken = storedLookup.session.refreshToken;
+          keycloak.idToken = storedLookup.session.idToken || undefined;
 
           keycloak.updateToken(-1).then(() => {
             console.log('Session restored successfully.');
+            saveTokens();
             finishInit(true);
           }).catch(() => {
             console.warn('Stored session invalid or expired. Logging out.');
-            clearTokens();
+            clearStoredSessionLookup(storageScope, storedLookup);
+            clearLegacyKeycloakTokens();
             keycloak.clearToken();
             finishInit(false);
           });
-          return; // Skip normal finishInit
+          return;
         }
       }
 
@@ -165,7 +210,8 @@ function App() {
       }).catch(() => {
         console.error('Token refresh failed, logging out...');
         clearTokens();
-        keycloak.logout({ redirectUri: window.location.origin });
+        markSkipRestoreOnce(storageScope);
+        keycloak.logout({ redirectUri: buildRedirectUri(resolveCurrentAuthuser(storageScope)) });
       });
     };
 
@@ -187,7 +233,7 @@ function App() {
       setUserInfo(null);
       clearTokens();
     };
-  }, []);
+  }, [clearTokens, saveTokens, storageScope]);
 
   // Effect to save theme mode to localStorage
   useEffect(() => {
@@ -224,18 +270,53 @@ function App() {
 
   const handleLogout = () => {
     setLogoutDialogOpen(false);
-    // Xoá token cục bộ ngay lập tức để tránh reload bị dính lại
-    localStorage.removeItem('kc_token');
-    localStorage.removeItem('kc_refreshToken');
-    localStorage.removeItem('kc_idToken');
+    clearTokens();
+    markSkipRestoreOnce(storageScope);
+    keycloak.logout({ redirectUri: buildRedirectUri(resolveCurrentAuthuser(storageScope)) });
+  };
 
-    // Thực hiện logout chuẩn OIDC, xoá session trên IDSafe và quay lại trang web hiện tại
-    keycloak.logout({ redirectUri: window.location.origin });
+  const createKeycloakLoginUrl = async (
+    redirectUri: string,
+    prompt?: 'select_account' | 'login',
+    authuser?: string,
+  ): Promise<string> => {
+    const loginUrl = await keycloak.createLoginUrl({ redirectUri });
+    const parsed = new URL(loginUrl);
+    parsed.searchParams.set('response_mode', 'query');
+    if (prompt) {
+      parsed.searchParams.set('prompt', prompt);
+    }
+    if (authuser && /^\d+$/.test(authuser)) {
+      parsed.searchParams.set('authuser', authuser);
+    }
+
+    return parsed.toString();
   };
 
   // --- Login handler ---
-  const handleLogin = () => {
-    keycloak.login();
+  const handleLogin = async () => {
+    const currentAuthuser = resolveCurrentAuthuser(storageScope);
+    const redirectUri = buildRedirectUri(currentAuthuser);
+    try {
+      const loginUrl = await createKeycloakLoginUrl(redirectUri, undefined, currentAuthuser);
+      window.location.assign(loginUrl);
+    } catch (error) {
+      console.error('Login redirect failed, fallback to keycloak.login', error);
+      keycloak.login({ redirectUri });
+    }
+  };
+
+  const handleSwitchAccount = async () => {
+    const currentAuthuser = resolveCurrentAuthuser(storageScope);
+    const redirectUri = buildRedirectUri(currentAuthuser);
+
+    try {
+      const loginUrl = await createKeycloakLoginUrl(redirectUri, 'select_account', currentAuthuser);
+      window.location.assign(loginUrl);
+    } catch (error) {
+      console.error('Switch account failed, fallback to keycloak.login', error);
+      keycloak.login({ redirectUri });
+    }
   };
 
   const handleRegisterDialogOpen = () => {
@@ -523,15 +604,26 @@ function App() {
                       {getUserEmail()}
                     </Typography>
                   </Box>
-                  <Tooltip title={t('userInfo.signOut')}>
-                    <IconButton
-                      onClick={handleLogoutDialogOpen}
-                      size="small"
-                      sx={{ color: themeMode === 'light' ? 'white' : undefined }}
-                    >
-                      <LogoutIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Tooltip title={t('userInfo.switchAccount', 'Chuyển tài khoản')}>
+                      <IconButton
+                        onClick={handleSwitchAccount}
+                        size="small"
+                        sx={{ color: themeMode === 'light' ? 'white' : undefined }}
+                      >
+                        <ManageAccountsIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title={t('userInfo.signOut')}>
+                      <IconButton
+                        onClick={handleLogoutDialogOpen}
+                        size="small"
+                        sx={{ color: themeMode === 'light' ? 'white' : undefined }}
+                      >
+                        <LogoutIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
                 </Box>
               </Box>
             </Drawer>

@@ -8,7 +8,8 @@
     "providerKeys": "Provider Keys"
   },
   "userInfo": {
-    "signOut": "Đăng xuất"
+    "signOut": "Đăng xuất",
+    "switchAccount": "Chuyển tài khoản"
   },
   "header": {
     "gatewayApiKeys": "Gateway API Key",

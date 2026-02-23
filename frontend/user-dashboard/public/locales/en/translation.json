@@ -8,7 +8,8 @@
     "providerKeys": "Provider Keys"
   },
   "userInfo": {
-    "signOut": "Sign Out"
+    "signOut": "Sign Out",
+    "switchAccount": "Switch Account"
   },
   "header": {
     "gatewayApiKeys": "Gateway API Keys",

@@ -27,6 +27,7 @@ Tính năng chính:
 - Phản hồi dạng streaming
 - Giám sát trạng thái
 - Quản lý Khóa API Nhà cung cấp (Lưu trữ, quản lý và nhập khóa qua giao diện người dùng)
+- Chuyển đổi đa tài khoản IDSafe (mở chooser bằng `prompt=select_account` mà không cần logout toàn bộ)
 - **Tự động chuyển đổi dự phòng (Failover) Khóa API**: Tự động xoay vòng sang khóa khả dụng tiếp theo khi gặp lỗi API cụ thể (ví dụ: 401, 429).
 - **Ghi Nhật ký Hoạt động**: Theo dõi các hành động quản lý khóa (thêm, xóa, chọn, nhập) và các sự kiện failover.
 

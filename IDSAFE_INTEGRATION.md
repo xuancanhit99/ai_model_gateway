@@ -69,3 +69,30 @@ VITE_IDSAFE_CLIENT_ID=hyper-ai-gateway
 1. Dùng `db/migrations/0001..0003` để chuẩn hoá schema trước cutover.
 2. Dùng `ops/migrate_live_supabase_to_postgres.sh` cho migration downtime.
 3. Dùng `ops/verify_postgres_cutover.sh` để kiểm tra row-count, orphan và duplicate `vnpay_id`.
+
+## 6. Multi-account (switch account không cần login lại)
+
+Frontend đã hỗ trợ:
+1. Nút **Switch Account** trong sidebar user menu.
+2. Khi bấm switch, app mở OIDC authorize với `prompt=select_account` để vào chooser.
+3. Session local được partition theo khóa `authuser + sub` (không còn 1 token bucket global).
+4. Có patch callback redirect URI cho PKCE để tương thích slot-aware callback.
+
+Điều kiện Keycloak để tính năng hoạt động đúng:
+1. Client `hyper-ai-gateway` cần bind vào flow multi-account (`idsafe-login-aal-flow-multi`).
+2. Set client attribute `multi-account-slot-aware=true`.
+
+Ví dụ rollout:
+
+```bash
+export IDSAFE_ADMIN_PASSWORD='<admin_password>'
+bash scripts/rollout_multi_account_slots.sh \
+  --base-url https://sso.vnpay.dev \
+  --realm idsafe-uat \
+  --slot-count 3 \
+  --max-saved-users 3 \
+  --bind-client hyper-ai-gateway \
+  --slot-aware-client hyper-ai-gateway \
+  --run-remote-check true \
+  --run-smoke false
+```

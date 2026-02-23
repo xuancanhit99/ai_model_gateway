@@ -27,6 +27,7 @@ Key features:
 - Streaming responses
 - Health monitoring
 - Provider API Key Management (Store, manage, and import keys via UI)
+- Multi-account IDSafe switch (open account chooser via `prompt=select_account` without full logout)
 - **Automatic API Key Failover**: Automatically rotates to the next available key upon encountering specific API errors (e.g., 401, 429).
 - **Activity Logging**: Tracks key management actions (add, delete, select, import) and failover events.
 
