@@ -46,9 +46,9 @@ DB_POOL_MIN_SIZE=1
 DB_POOL_MAX_SIZE=10
 APP_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
 
-IDSAFE_ISSUER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat
-IDSAFE_TOKEN_URL=https://idsafe.vnpay.dev/realms/idsafe-uat/protocol/openid-connect/token
-IDSAFE_REGISTER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register
+IDSAFE_ISSUER_URL=https://sso.vnpay.dev/realms/idsafe-uat
+IDSAFE_TOKEN_URL=https://sso.vnpay.dev/realms/idsafe-uat/protocol/openid-connect/token
+IDSAFE_REGISTER_URL=https://sso.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register
 IDSAFE_SERVICE_CLIENT_ID=hyper-ai-gateway-service
 IDSAFE_SERVICE_CLIENT_SECRET=***
 IDSAFE_VERIFY_AUD=false
@@ -59,7 +59,7 @@ IDSAFE_EXPECTED_AZP=hyper-ai-gateway
 ### Frontend
 
 ```bash
-VITE_IDSAFE_URL=https://idsafe.vnpay.dev
+VITE_IDSAFE_URL=https://sso.vnpay.dev
 VITE_IDSAFE_REALM=idsafe-uat
 VITE_IDSAFE_CLIENT_ID=hyper-ai-gateway
 ```

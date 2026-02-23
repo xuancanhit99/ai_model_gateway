@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     # IDSafe / Keycloak
     IDSAFE_ISSUER_URL: Optional[str] = None
     IDSAFE_TOKEN_URL: Optional[str] = None
-    IDSAFE_REGISTER_URL: str = "https://idsafe.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register"
+    IDSAFE_REGISTER_URL: str = "https://sso.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register"
     IDSAFE_VERIFY_AUD: bool = False
     IDSAFE_EXPECTED_AUDIENCE: Optional[str] = None
     IDSAFE_EXPECTED_AZP: str = "hyper-ai-gateway"

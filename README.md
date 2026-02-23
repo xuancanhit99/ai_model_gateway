@@ -116,8 +116,8 @@ PERPLEXITY_API_BASE_URL=https://api.perplexity.ai
 SONAR_DEFAULT_MODEL=sonar
 
 # IDSafe settings
-IDSAFE_ISSUER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat
-IDSAFE_REGISTER_URL=https://idsafe.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register
+IDSAFE_ISSUER_URL=https://sso.vnpay.dev/realms/idsafe-uat
+IDSAFE_REGISTER_URL=https://sso.vnpay.dev/realms/idsafe-uat/idsafe-api/user/register
 IDSAFE_SERVICE_CLIENT_ID=hyper-ai-gateway-service
 IDSAFE_SERVICE_CLIENT_SECRET=***
 IDSAFE_VERIFY_AUD=false

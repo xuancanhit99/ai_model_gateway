@@ -5,7 +5,7 @@ import Keycloak from 'keycloak-js';
  * Replaces Supabase Auth for user login/logout.
  */
 const keycloak = new Keycloak({
-    url: import.meta.env.VITE_IDSAFE_URL || 'https://idsafe.vnpay.dev',
+    url: import.meta.env.VITE_IDSAFE_URL || 'https://sso.vnpay.dev',
     realm: import.meta.env.VITE_IDSAFE_REALM || 'idsafe-uat',
     clientId: import.meta.env.VITE_IDSAFE_CLIENT_ID || 'hyper-ai-gateway',
 });
