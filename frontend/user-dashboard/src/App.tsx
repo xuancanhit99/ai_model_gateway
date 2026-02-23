@@ -583,46 +583,77 @@ function App() {
               {/* Spacer */}
               <Box sx={{ flexGrow: 1 }} />
 
-              {/* User Info / Logout */}
+              {/* User Info / Account Actions */}
               <Box sx={{ p: 2 }}>
                 <Divider sx={{
                   mb: 1,
                   borderColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.2)' : undefined
                 }} />
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, minWidth: 0 }}>
                     <Avatar sx={{
                       width: 32,
                       height: 32,
-                      mr: 1,
                       bgcolor: themeMode === 'light' ? 'primary.light' : 'primary.main',
                       color: themeMode === 'light' ? 'text.primary' : 'white'
                     }}>
                       {getUserEmail() ? getUserEmail()[0].toUpperCase() : '?'}
                     </Avatar>
-                    <Typography variant="body2" noWrap sx={{ flexShrink: 1, color: themeMode === 'light' ? 'white' : undefined }}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        minWidth: 0,
+                        color: themeMode === 'light' ? 'white' : undefined,
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                        lineHeight: 1.35,
+                      }}
+                    >
                       {getUserEmail()}
                     </Typography>
                   </Box>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Tooltip title={t('userInfo.switchAccount', 'Chuyển tài khoản')}>
-                      <IconButton
-                        onClick={handleSwitchAccount}
-                        size="small"
-                        sx={{ color: themeMode === 'light' ? 'white' : undefined }}
-                      >
-                        <ManageAccountsIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title={t('userInfo.signOut')}>
-                      <IconButton
-                        onClick={handleLogoutDialogOpen}
-                        size="small"
-                        sx={{ color: themeMode === 'light' ? 'white' : undefined }}
-                      >
-                        <LogoutIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                    <Button
+                      onClick={handleSwitchAccount}
+                      size="medium"
+                      fullWidth
+                      variant="text"
+                      startIcon={<ManageAccountsIcon fontSize="small" />}
+                      sx={{
+                        textTransform: 'none',
+                        justifyContent: 'flex-start',
+                        px: 1,
+                        py: 0.6,
+                        borderRadius: 0,
+                        color: themeMode === 'light' ? 'white' : undefined,
+                        '&:hover': {
+                          backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.08)' : undefined,
+                        },
+                      }}
+                    >
+                      {t('userInfo.switchAccount', 'Chuyển tài khoản')}
+                    </Button>
+                    <Button
+                      onClick={handleLogoutDialogOpen}
+                      size="medium"
+                      fullWidth
+                      variant="text"
+                      startIcon={<LogoutIcon fontSize="small" />}
+                      sx={{
+                        textTransform: 'none',
+                        justifyContent: 'flex-start',
+                        px: 1,
+                        py: 0.6,
+                        borderRadius: 0,
+                        color: themeMode === 'light' ? 'white' : undefined,
+                        '&:hover': {
+                          backgroundColor: themeMode === 'light' ? 'rgba(255, 255, 255, 0.08)' : undefined,
+                        },
+                      }}
+                    >
+                      {t('userInfo.signOut')}
+                    </Button>
                   </Box>
                 </Box>
               </Box>
