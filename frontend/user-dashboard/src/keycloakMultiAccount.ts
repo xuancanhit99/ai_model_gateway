@@ -3,6 +3,7 @@ const AUTHUSER_PARAM = 'authuser';
 const DEFAULT_AUTHUSER = '0';
 const CALLBACK_PREFIX = 'kc-callback-';
 const LEGACY_KEYS = ['kc_token', 'kc_refreshToken', 'kc_idToken'];
+const UNKNOWN_SCOPE = 'unknown-realm:unknown-client';
 
 export interface StoredKeycloakSession {
   token: string;
@@ -225,6 +226,26 @@ export const clearStoredSessionsForAuthuser = (scope: string, authuser: string):
 
 export const clearLegacyKeycloakTokens = (): void => {
   for (const key of LEGACY_KEYS) {
+    localStorage.removeItem(key);
+  }
+};
+
+export const cleanupUnknownScopeStorage = (activeScope: string): void => {
+  if (activeScope === UNKNOWN_SCOPE) {
+    return;
+  }
+
+  const unknownPrefix = `${STORAGE_PREFIX}:${UNKNOWN_SCOPE}:`;
+  const toDelete: string[] = [];
+
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(unknownPrefix)) {
+      toDelete.push(key);
+    }
+  }
+
+  for (const key of toDelete) {
     localStorage.removeItem(key);
   }
 };

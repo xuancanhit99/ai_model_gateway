@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Toaster } from 'react-hot-toast';
-import keycloak from './keycloakClient';
+import keycloak, { IDSAFE_CLIENT_ID, IDSAFE_REALM } from './keycloakClient';
 import ApiKeyList from './components/ApiKeyList';
 import ApiKeyCreateForm from './components/ApiKeyCreateForm';
 import ProviderKeyManager from './components/ProviderKeyManager';
@@ -19,6 +19,7 @@ import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import {
   buildRedirectUri,
   clearLegacyKeycloakTokens,
+  cleanupUnknownScopeStorage,
   clearStoredSessionLookup,
   clearStoredSessionsForAuthuser,
   consumeSkipRestoreOnce,
@@ -94,7 +95,7 @@ function App() {
   const [registerSubmitting, setRegisterSubmitting] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
-  const storageScope = getStorageScope(keycloak.realm, keycloak.clientId);
+  const storageScope = getStorageScope(IDSAFE_REALM, IDSAFE_CLIENT_ID);
 
   // Callback for Gateway key creation
   const handleGatewayKeyCreated = useCallback(() => {
@@ -141,6 +142,8 @@ function App() {
 
   // --- Keycloak Init ---
   useEffect(() => {
+    cleanupUnknownScopeStorage(storageScope);
+
     const callbackAuthuser = readAuthuserFromUrl() ?? resolveCurrentAuthuser(storageScope);
     const initRedirectUri = buildRedirectUri(callbackAuthuser);
     patchPkceCallbackRedirectUri(initRedirectUri);

@@ -5,15 +5,15 @@ import { getStorageScope, resolveCurrentAuthuser } from './keycloakMultiAccount'
  * IDSafe (Keycloak) OIDC client for authentication.
  * Replaces Supabase Auth for user login/logout.
  */
-const baseAuthUrl = (import.meta.env.VITE_IDSAFE_URL || 'https://sso.vnpay.dev').replace(/\/+$/, '');
-const realm = import.meta.env.VITE_IDSAFE_REALM || 'idsafe-uat';
-const clientId = import.meta.env.VITE_IDSAFE_CLIENT_ID || 'hyper-ai-gateway';
+export const IDSAFE_BASE_AUTH_URL = (import.meta.env.VITE_IDSAFE_URL || 'https://sso.vnpay.dev').replace(/\/+$/, '');
+export const IDSAFE_REALM = import.meta.env.VITE_IDSAFE_REALM || 'idsafe-uat';
+export const IDSAFE_CLIENT_ID = import.meta.env.VITE_IDSAFE_CLIENT_ID || 'hyper-ai-gateway';
 
 const normalizeAuthServerUrl = (candidate: string): string => candidate.replace(/\/+$/, '');
 
 const resolveStoredAuthuser = (): string | null => {
     try {
-        const scope = getStorageScope(realm, clientId);
+        const scope = getStorageScope(IDSAFE_REALM, IDSAFE_CLIENT_ID);
         const storedAuthuser = resolveCurrentAuthuser(scope);
         if (storedAuthuser && /^\d+$/.test(storedAuthuser) && storedAuthuser !== '0') {
             return storedAuthuser;
@@ -27,7 +27,7 @@ const resolveStoredAuthuser = (): string | null => {
 const resolveAuthServerUrl = (): string => {
     const params = new URLSearchParams(window.location.search);
     const issuer = params.get('iss');
-    const realmPath = `/realms/${realm}`;
+    const realmPath = `/realms/${IDSAFE_REALM}`;
 
     if (issuer) {
         try {
@@ -47,21 +47,21 @@ const resolveAuthServerUrl = (): string => {
 
     const authuser = params.get('authuser');
     if (authuser && /^\d+$/.test(authuser) && authuser !== '0') {
-        return `${baseAuthUrl}/u/${authuser}`;
+        return `${IDSAFE_BASE_AUTH_URL}/u/${authuser}`;
     }
 
     const storedAuthuser = resolveStoredAuthuser();
     if (storedAuthuser) {
-        return `${baseAuthUrl}/u/${storedAuthuser}`;
+        return `${IDSAFE_BASE_AUTH_URL}/u/${storedAuthuser}`;
     }
 
-    return baseAuthUrl;
+    return IDSAFE_BASE_AUTH_URL;
 };
 
 const keycloak = new Keycloak({
     url: resolveAuthServerUrl(),
-    realm,
-    clientId,
+    realm: IDSAFE_REALM,
+    clientId: IDSAFE_CLIENT_ID,
 });
 
 // Log config for debugging
